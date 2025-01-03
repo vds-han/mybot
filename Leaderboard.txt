@@ -1,0 +1,388 @@
+##############Adding Leaderboard##################
+import logging
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
+from telegram.error import BadRequest
+from database import SessionLocal
+from models import User, Reward, Event, Transaction
+
+# Load environment variables
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Logging configuration
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Database session
+db_session = SessionLocal()
+
+
+# Mock AI Response
+def mock_ai_response(location_id, rubbish_type):
+    """Simulate AI rubbish detection response."""
+    rubbish_map = {
+        "plastic": {"points": 10},
+        "glass": {"points": 20},
+        "paper": {"points": 5},
+        "metal": {"points": 15},
+    }
+    points = rubbish_map.get(rubbish_type, {"points": 0})["points"]
+    return {"rubbish_type": rubbish_type, "points": points}
+
+
+# Helper Functions for Menus
+def main_menu():
+    """Main menu inline keyboard."""
+    keyboard = [
+        [InlineKeyboardButton("Check Balance", callback_data="check_balance")],
+        [InlineKeyboardButton("Redeem Rewards", callback_data="redeem_rewards")],
+        [InlineKeyboardButton("View Events", callback_data="view_events")],
+        [InlineKeyboardButton("Leaderboard", callback_data="leaderboard")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def safe_edit_message_text(query, text, **kwargs):
+    """Safely edit message text without raising 'Message is not modified' error."""
+    try:
+        query.edit_message_text(text, **kwargs)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass  # Ignore the error if the message is the same
+        else:
+            raise e
+
+
+# Command Handlers
+def start(update: Update, context: CallbackContext):
+    """Request user's phone number during registration."""
+    user_id = update.effective_user.id
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+
+    # Check if user is already registered
+    if user and user.phone_number and user.name:
+        update.message.reply_text(f"Welcome back, {user.name}!")
+        return
+
+    if user and not user.phone_number:
+        update.message.reply_text("Your registration is incomplete. Please share your phone number.")
+
+    # Request phone number
+    phone_button = KeyboardButton("Share Phone Number", request_contact=True)
+    reply_markup = ReplyKeyboardMarkup([[phone_button]], one_time_keyboard=True, resize_keyboard=True)
+
+    update.message.reply_text(
+        "Please share your phone number to start registration:",
+        reply_markup=reply_markup
+    )
+
+
+def register_contact(update: Update, context: CallbackContext):
+    """Handle contact sharing and register the user."""
+    contact = update.message.contact
+    user_id = update.effective_user.id
+
+    # Check if user already exists
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+    if not user:
+        # Create a new user entry
+        user = User(
+            telegram_id=user_id,
+            phone_number=contact.phone_number,
+            points=0
+        )
+        db_session.add(user)
+        db_session.commit()
+
+    # Request the user's name
+    context.user_data['registration_step'] = 'awaiting_name'
+    update.message.reply_text(
+        "Thank you! Please enter your name to complete registration."
+    )
+
+
+def collect_name(update: Update, context: CallbackContext):
+    """Handle name input and complete registration."""
+    user_id = update.effective_user.id
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+
+    if not user or 'registration_step' not in context.user_data or context.user_data['registration_step'] != 'awaiting_name':
+        update.message.reply_text("Unexpected input. Use /start to register.")
+        return
+
+    # Store the name
+    user.name = update.message.text.strip()
+    db_session.commit()
+
+    # Registration complete
+    context.user_data.pop('registration_step', None)
+    update.message.reply_text(
+        f"Welcome, {user.name}! Registration complete. You can now start using the bot.",
+        reply_markup=main_menu()
+    )
+
+
+def scan_qr(update: Update, context: CallbackContext):
+    """Simulate scanning a QR code and assign points based on rubbish detected."""
+    user_id = update.effective_user.id
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+
+    # Prompt registration if the user is not found
+    if not user:
+        update.message.reply_text("You are not registered. Please use /start to register.")
+        return
+
+    # Block users without phone numbers or names
+    if not user.phone_number or not user.name:
+        update.message.reply_text("Your registration is incomplete. Please use /start to complete it.")
+        return
+
+    # Ensure location and rubbish type are provided
+    if len(context.args) < 2:
+        update.message.reply_text("Usage: /scan <location_id> <rubbish_type>")
+        return
+
+    location_id = context.args[0]
+    rubbish_type = context.args[1].lower()
+
+    ai_response = mock_ai_response(location_id, rubbish_type)
+    points = ai_response["points"]
+
+    if points == 0:
+        update.message.reply_text(f"Unknown rubbish type: {rubbish_type}. Please try again.")
+        return
+
+    logger.info(f"{user.name} (ID: {user.telegram_id}) scanned rubbish at {location_id}, type: {rubbish_type}")
+
+    user.points += points
+    db_session.commit()
+
+    transaction = Transaction(
+        user_id=user.id,
+        points_change=points,
+        description=f"Disposed {rubbish_type} at {location_id}.",
+    )
+    db_session.add(transaction)
+    db_session.commit()
+
+    update.message.reply_text(
+        f"{user.name}, you've earned {points} points for disposing {rubbish_type} at {location_id}.\n\nWhat would you like to do next?",
+        reply_markup=main_menu(),
+    )
+
+
+def redeem(update: Update, context: CallbackContext):
+    """Redeem a specific reward."""
+    user_id = update.effective_user.id
+    args = context.args
+
+    if not args:
+        update.message.reply_text("Usage: /redeem <reward_id>")
+        logger.info(f"{user_id} - Failed redemption: No reward ID provided.")
+        return
+
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+
+    # Prompt registration if the user is not found
+    if not user:
+        update.message.reply_text("You are not registered. Please use /start to register.")
+        logger.info(f"{user_id} - Failed redemption: User not registered.")
+        return
+
+    # Block users without phone numbers or names
+    if not user.phone_number or not user.name:
+        update.message.reply_text("Your registration is incomplete. Please use /start to complete it.")
+        logger.info(f"{user_id} - Failed redemption: Registration incomplete.")
+        return
+
+    reward_id = int(args[0])
+    reward = db_session.query(Reward).filter_by(id=reward_id).first()
+
+    if not reward:
+        update.message.reply_text("Invalid reward ID.")
+        logger.info(f"{user.name} (ID: {user.telegram_id}) - Failed redemption: Invalid reward ID ({reward_id}).")
+        return
+    if user.points < reward.points_required:
+        update.message.reply_text("You don't have enough points to redeem this reward.")
+        logger.info(f"{user.name} (ID: {user.telegram_id}) - Failed redemption: Insufficient points.")
+        return
+    if reward.quantity_available <= 0:
+        update.message.reply_text("This reward is no longer available.")
+        logger.info(f"{user.name} (ID: {user.telegram_id}) - Failed redemption: Reward out of stock ({reward.name}).")
+        return
+
+    # Log redeem attempt
+    logger.info(f"{user.name} (ID: {user.telegram_id}) is redeeming {reward.name}")
+
+    # Process redemption
+    user.points -= reward.points_required
+    reward.quantity_available -= 1
+    db_session.commit()
+
+    transaction = Transaction(
+        user_id=user.id,
+        points_change=-reward.points_required,
+        description=f"Redeemed reward: {reward.name}",
+    )
+    db_session.add(transaction)
+    db_session.commit()
+
+    # Log successful redemption
+    logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed {reward.name}")
+
+    update.message.reply_text(
+        f"Congratulations, {user.name}! You've successfully redeemed {reward.name}.\nYour remaining points: {user.points}"
+    )
+
+
+# Callback Query Handlers
+def check_balance(update: Update, context: CallbackContext):
+    """Display the user's current balance."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    user = db_session.query(User).filter_by(telegram_id=user_id).first()
+
+    if user:
+        query.answer()
+        message_text = (
+            f"Hello {user.name}, your current balance is: {user.points} points.\n\nWhat would you like to do next?"
+        )
+        safe_edit_message_text(
+            query,
+            message_text,
+            reply_markup=main_menu(),
+        )
+    else:
+        query.answer()
+        safe_edit_message_text(
+            query,
+            "You are not registered. Please use /start to register.",
+            reply_markup=main_menu()
+        )
+
+
+def redeem_rewards(update: Update, context: CallbackContext):
+    """Display the rewards menu."""
+    query = update.callback_query
+
+    # Fetch available rewards
+    rewards = db_session.query(Reward).all()
+    if rewards:
+        message = "🎁 Available Rewards:\n"
+        for reward in rewards:
+            message += f"{reward.id}. {reward.name} - {reward.points_required} points\n"
+        query.answer()
+        safe_edit_message_text(
+            query,
+            f"{message}\n\nWhat would you like to do next?",
+            reply_markup=main_menu()
+        )
+    else:
+        query.answer()
+        safe_edit_message_text(
+            query,
+            "No rewards available at the moment.\n\nWhat would you like to do next?",
+            reply_markup=main_menu(),
+        )
+
+
+def view_events(update: Update, context: CallbackContext):
+    """Display the events menu."""
+    query = update.callback_query
+
+    # Fetch upcoming events
+    events = db_session.query(Event).all()
+    if events:
+        message = "📅 *Upcoming Events:*\n\n"  
+        for event in events:
+            message += f"*{event.name}*\nDate: {event.date.strftime('%Y-%m-%d')}\n{event.description}\n\n"
+        query.answer()
+        safe_edit_message_text(
+            query,
+            f"{message}What would you like to do next?",
+            parse_mode="Markdown",
+            reply_markup=main_menu()
+        )
+    else:
+        query.answer()
+        safe_edit_message_text(
+            query,
+            "No events available at the moment.\n\nWhat would you like to do next?",
+            reply_markup=main_menu(),
+        )
+
+
+def leaderboard(update: Update, context: CallbackContext):
+    """Display the leaderboard of users."""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Fetch top users by points
+    top_users = db_session.query(User).order_by(User.points.desc()).limit(10).all()
+
+    if top_users:
+        message = "🏆 *Leaderboard:*\n\n"
+        for idx, user in enumerate(top_users, start=1):
+            message += f"{idx}. {user.name} - {user.points} points\n"
+        query.answer()
+        safe_edit_message_text(
+            query,
+            f"{message}\n\nWhat would you like to do next?",
+            parse_mode="Markdown",
+            reply_markup=main_menu(),
+        )
+    else:
+        query.answer()
+        safe_edit_message_text(
+            query,
+            "No users found on the leaderboard.\n\nWhat would you like to do next?",
+            reply_markup=main_menu(),
+        )
+
+
+def main_menu_callback(update: Update, context: CallbackContext):
+    """Return to the main menu."""
+    query = update.callback_query
+    query.answer()
+    safe_edit_message_text(
+        query,
+        "What would you like to do?",
+        reply_markup=main_menu()
+    )
+
+
+# Main Function
+def main():
+    """Main function to start the bot."""
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    # Command handlers
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("scan", scan_qr))
+    dp.add_handler(CommandHandler("redeem", redeem))
+
+    # Message handlers
+    dp.add_handler(MessageHandler(Filters.contact, register_contact))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, collect_name))  # Collect name input
+
+    # Callback query handlers
+    dp.add_handler(CallbackQueryHandler(check_balance, pattern="^check_balance$"))
+    dp.add_handler(CallbackQueryHandler(redeem_rewards, pattern="^redeem_rewards$"))
+    dp.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
+    dp.add_handler(CallbackQueryHandler(leaderboard, pattern="^leaderboard$"))
+    dp.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+
+    # Start the bot
+    updater.start_polling()
+    logger.info("Bot is running...")
+    updater.idle()
+
+
+if __name__ == "__main__":
+    main()
