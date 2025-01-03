@@ -6,5 +6,4 @@ pytz
 apscheduler
 sqlalchemy
 python-dotenv
-werkzeug
 flask
