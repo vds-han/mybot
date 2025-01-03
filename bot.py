@@ -37,7 +37,7 @@ def home():
 def run_web_server():
     # Bind the server to the port provided by Render
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    #app.run(host="0.0.0.0", port=port)
 
 # Configure logging
 logging.basicConfig(
@@ -1024,14 +1024,11 @@ def main():
 
     logger.info(f"🤖 Bot is running with webhook set to {WEBHOOK_URL}/{TOKEN}")
 
-    # Run the Flask web server for Render's health check
-    run_web_server()
+    # Flask web server does not need to run manually here; Render will handle it
+    logger.info("Flask web server is managed by Render automatically.")
 
 
 if __name__ == "__main__":
-    # Start the Flask web server in a separate thread
-    web_server_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_server_thread.start()
-
-    # Start the bot (main bot logic)
+    # Directly call the main function
     main()
+
