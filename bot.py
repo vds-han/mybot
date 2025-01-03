@@ -158,55 +158,69 @@ def request_registration(update: Update, context: CallbackContext):
 def start(update: Update, context: CallbackContext):
     """Handle the /start command with optional activation parameter."""
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     args = context.args  # List of arguments passed with /start
+
+    logger.info(f"Received /start command from user: {user_id}, arguments: {args}")
+
+    # Initialize the database session
     db = SessionLocal()
 
-    # Check if the user is already registered
-    user = db.query(User).filter_by(telegram_id=user_id).first()
-    config = db.query(Configuration).first()
+    try:
+        # Check if the user is already registered
+        user = db.query(User).filter_by(telegram_id=user_id).first()
+        config = db.query(Configuration).first()
 
-    if user:
-        if args and args[0] == "activate_bin":
-            # Handle QR code activation
-            if config:
-                if config.active_user_id:
-                    # Get the previous active user (if any) for logging
-                    previous_user = db.query(User).filter_by(id=config.active_user_id).first()
-                    if previous_user and previous_user.id != user.id:
-                        logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
+        if user:
+            # If the user exists, handle the optional "activate_bin" parameter
+            if args and args[0] == "activate_bin":
+                # Handle QR code activation
+                if config:
+                    if config.active_user_id:
+                        # Deactivate the previous active user (if any)
+                        previous_user = db.query(User).filter_by(id=config.active_user_id).first()
+                        if previous_user and previous_user.id != user.id:
+                            logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
 
-            # Activate the current user as the new active user
-            if not config:
-                config = Configuration(active_user_id=user.id)
-                db.add(config)
+                # Activate the current user as the new active user
+                if not config:
+                    config = Configuration(active_user_id=user.id)
+                    db.add(config)
+                else:
+                    config.active_user_id = user.id
+
+                db.commit()
+
+                # Notify the user
+                update.message.reply_text(
+                    f"🎉 Welcome, {user.name}! You are now the active user for the bin.\n"
+                    f"Start disposing to earn points."
+                )
+                logger.info(f"User {user.name} (ID: {user.telegram_id}) is now active.")
             else:
-                config.active_user_id = user.id
-
-            db.commit()
-            update.message.reply_text(
-                f"🎉 Welcome, {user.name}! You are now the active user for the bin.\n"
-                f"Start disposing to earn points."
-            )
-            logger.info(f"User {user.name} (ID: {user.telegram_id}) is now active.")
+                # Regular /start command without activation
+                send_main_menu(chat_id, context, text=f"Hello {user.name}! Welcome back.")
         else:
-            # Regular /start command (no activation)
-            send_main_menu(update.message.chat_id, context, text=f"Hello {user.name}! Welcome back.")
-    else:
-        if args and args[0] == "activate_bin":
-            # User scanned the QR code but is not registered
-            update.message.reply_text(
-                "🚫 You need to register first. Please share your phone number to register."
-            )
-            request_registration(update, context)
-        else:
-            # Regular /start command for a new user
-            update.message.reply_text(
-                "👋 Welcome! Please register by sharing your phone number to continue."
-            )
-            request_registration(update, context)
-
-    db.close()
-
+            # If the user is new
+            if args and args[0] == "activate_bin":
+                # User scanned the QR code but is not registered
+                update.message.reply_text(
+                    "🚫 You need to register first. Please share your phone number to register."
+                )
+                request_registration(update, context)
+            else:
+                # Regular /start command for a new user
+                update.message.reply_text(
+                    "👋 Welcome! Please register by sharing your phone number to continue."
+                )
+                request_registration(update, context)
+                logger.info(f"New user (ID: {user_id}) prompted to register.")
+    except Exception as e:
+        logger.error(f"❌ Error processing /start command for user {user_id}: {e}")
+        update.message.reply_text("🚫 An error occurred while processing your request. Please try again later.")
+    finally:
+        db.close()
+        logger.info(f"Database session closed for user {user_id}.")
 
 def active_user(update: Update, context: CallbackContext):
     db = SessionLocal()
@@ -944,32 +958,33 @@ class MQTTClientHandler:
 def main():
     """Main function to start the bot and MQTT client."""
     # Initialize the database (create tables if they don't exist)
-    init_db()
+    try:
+        init_db()
+        logger.info("✅ Database initialized successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize the database: {e}")
+        return
 
     # Load environment variables
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
-    MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost")
-    MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
-    MQTT_USERNAME = os.getenv("MQTT_USERNAME")
-    MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
-    MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
-    ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
+    BOT_USERNAME = os.getenv("BOT_USERNAME")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render app public URL, e.g., "https://your-app-name.onrender.com"
     PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
 
-    # Check essential environment variables
+    # Ensure essential environment variables are set
     if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
-        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
+        logger.error("❌ Missing required environment variables: TELEGRAM_BOT_TOKEN, BOT_USERNAME, or WEBHOOK_URL.")
         return
 
     # Initialize the Telegram bot
-    updater = Updater(TOKEN, use_context=True, request_kwargs={"read_timeout": 20, "connect_timeout": 20})
+    try:
+        updater = Updater(TOKEN, use_context=True, request_kwargs={"read_timeout": 20, "connect_timeout": 20})
+        logger.info("✅ Telegram bot initialized successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize the Telegram bot: {e}")
+        return
 
     dp = updater.dispatcher
-
-    # Initialize a thread-safe queue for notifications
-    message_queue = queue.Queue()
 
     # Command handlers
     dp.add_handler(CommandHandler("start", start))
@@ -986,21 +1001,28 @@ def main():
     dp.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
     dp.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
     dp.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
-    dp.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
     dp.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
 
     # Register the error handler
     dp.add_error_handler(error_handler)
 
-    # Start MQTT client
-    mqtt_client = MQTTClientHandler(
-        broker_url=MQTT_BROKER_URL,
-        broker_port=MQTT_BROKER_PORT,
-        username=MQTT_USERNAME,
-        password=MQTT_PASSWORD,
-        topic=MQTT_TOPIC,
-        message_queue=message_queue,
-    )
+    # Set webhook for the bot
+    try:
+        updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+        logger.info(f"✅ Webhook successfully set to {WEBHOOK_URL}/{TOKEN}")
+    except Exception as e:
+        logger.error(f"❌ Failed to set webhook: {e}")
+        return
+
+    # Log bot startup
+    logger.info("🤖 Bot is now running...")
+
+    # Run the Flask web server for Render's health check
+    try:
+        app.run(host="0.0.0.0", port=PORT)
+    except Exception as e:
+        logger.error(f"❌ Failed to start Flask web server: {e}")
+
 
     # Start the message queue processing in a separate thread
     def process_message_queue():
