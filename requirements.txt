@@ -1,4 +1,9 @@
-﻿python-telegram-bot==13.15
-python-dotenv
-SQLAlchemy
+python-telegram-bot==13.5
+flask==2.1.0
+paho-mqtt==1.6.1
 qrcode
+pytz
+apscheduler
+sqlalchemy
+python-dotenv
+werkzeug
