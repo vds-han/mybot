@@ -941,8 +941,6 @@ class MQTTClientHandler:
         finally:
             db.close()
 
-# Main Function
-
 def main():
     """Main function to start the bot and MQTT client."""
     # Initialize the database (create tables if they don't exist)
@@ -957,10 +955,12 @@ def main():
     MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
     MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
     ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
+    PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
 
     # Check essential environment variables
-    if not all([TOKEN, BOT_USERNAME]):
-        logger.error("❌ TELEGRAM_BOT_TOKEN and BOT_USERNAME must be set in environment variables.")
+    if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
+        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
         return
 
     # Initialize the Telegram bot
@@ -987,7 +987,6 @@ def main():
     dp.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
     dp.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
     dp.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
-    # Add the new callback handler for "view_disposal_history"
     dp.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
 
     # Register the error handler
@@ -1000,9 +999,8 @@ def main():
         username=MQTT_USERNAME,
         password=MQTT_PASSWORD,
         topic=MQTT_TOPIC,
-        message_queue=message_queue
+        message_queue=message_queue,
     )
-  
 
     # Start the message queue processing in a separate thread
     def process_message_queue():
@@ -1012,8 +1010,8 @@ def main():
                 if message:
                     send_notification_message(
                         updater.bot,
-                        chat_id=message['chat_id'],
-                        text=message['text']
+                        chat_id=message["chat_id"],
+                        text=message["text"],
                     )
                     logger.info(f"Sent notification to chat ID {message['chat_id']}.")
             except Exception as e:
@@ -1021,10 +1019,14 @@ def main():
 
     threading.Thread(target=process_message_queue, daemon=True).start()
 
-    # Start the bot
-    updater.start_polling()
-    logger.info("🤖 Bot is running...")
-    updater.idle()
+    # Set the webhook for the bot
+    updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+
+    logger.info(f"🤖 Bot is running with webhook set to {WEBHOOK_URL}/{TOKEN}")
+
+    # Run the Flask web server for Render's health check
+    run_web_server()
+
 
 if __name__ == "__main__":
     # Start the Flask web server in a separate thread
