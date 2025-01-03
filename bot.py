@@ -957,6 +957,8 @@ class MQTTClientHandler:
 
 def main():
     """Main function to start the bot and MQTT client."""
+    logger.info("Starting bot...")
+
     # Initialize the database (create tables if they don't exist)
     try:
         init_db()
@@ -967,24 +969,33 @@ def main():
 
     # Load environment variables
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    BOT_USERNAME = os.getenv("BOT_USERNAME")
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render app public URL, e.g., "https://your-app-name.onrender.com"
+    BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
     PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
 
-    # Ensure essential environment variables are set
+    MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost")
+    MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
+    MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+    MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+    MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
+    ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
+
+    # Validate essential environment variables
     if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
-        logger.error("❌ Missing required environment variables: TELEGRAM_BOT_TOKEN, BOT_USERNAME, or WEBHOOK_URL.")
+        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
         return
 
     # Initialize the Telegram bot
     try:
         updater = Updater(TOKEN, use_context=True, request_kwargs={"read_timeout": 20, "connect_timeout": 20})
+        dp = updater.dispatcher
         logger.info("✅ Telegram bot initialized successfully.")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize the Telegram bot: {e}")
+        logger.error(f"❌ Failed to initialize Telegram bot: {e}")
         return
 
-    dp = updater.dispatcher
+    # Initialize a thread-safe queue for notifications
+    message_queue = queue.Queue()
 
     # Command handlers
     dp.add_handler(CommandHandler("start", start))
@@ -1001,28 +1012,34 @@ def main():
     dp.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
     dp.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
     dp.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    dp.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
     dp.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
 
     # Register the error handler
     dp.add_error_handler(error_handler)
 
-    # Set webhook for the bot
+    # Set the webhook for the bot
     try:
         updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-        logger.info(f"✅ Webhook successfully set to {WEBHOOK_URL}/{TOKEN}")
+        logger.info(f"✅ Webhook set to {WEBHOOK_URL}/{TOKEN}")
     except Exception as e:
         logger.error(f"❌ Failed to set webhook: {e}")
         return
 
-    # Log bot startup
-    logger.info("🤖 Bot is now running...")
-
-    # Run the Flask web server for Render's health check
+    # Initialize the MQTT client
     try:
-        app.run(host="0.0.0.0", port=PORT)
+        mqtt_client = MQTTClientHandler(
+            broker_url=MQTT_BROKER_URL,
+            broker_port=MQTT_BROKER_PORT,
+            username=MQTT_USERNAME,
+            password=MQTT_PASSWORD,
+            topic=MQTT_TOPIC,
+            message_queue=message_queue,
+        )
+        logger.info("✅ MQTT client initialized successfully.")
     except Exception as e:
-        logger.error(f"❌ Failed to start Flask web server: {e}")
-
+        logger.error(f"❌ Failed to initialize MQTT client: {e}")
+        return
 
     # Start the message queue processing in a separate thread
     def process_message_queue():
@@ -1035,22 +1052,12 @@ def main():
                         chat_id=message["chat_id"],
                         text=message["text"],
                     )
-                    logger.info(f"Sent notification to chat ID {message['chat_id']}.")
+                    logger.info(f"📨 Sent notification to chat ID {message['chat_id']}.")
             except Exception as e:
-                logger.error(f"Error sending queued message: {e}")
+                logger.error(f"❌ Error sending queued message: {e}")
 
     threading.Thread(target=process_message_queue, daemon=True).start()
 
-    # Set the webhook for the bot
-    updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-
-    logger.info(f"🤖 Bot is running with webhook set to {WEBHOOK_URL}/{TOKEN}")
-
     # Flask web server does not need to run manually here; Render will handle it
-    logger.info("Flask web server is managed by Render automatically.")
-
-
-if __name__ == "__main__":
-    # Directly call the main function
-    main()
+    logger.info("✅ Bot is running with webhook and Flask managed by Render.")
 
