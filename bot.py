@@ -19,13 +19,25 @@ from telegram.ext import (
     MessageHandler, Filters, CallbackContext
 )
 from telegram.error import BadRequest
-
+from flask import Flask
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from database import (
     init_db, SessionLocal, User, Reward, Transaction,
     Redemption, Event, UserSession, Configuration
 )
+
+# Create a Flask app
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_web_server():
+    # Bind the server to the port provided by Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
 # Configure logging
 logging.basicConfig(
@@ -1015,4 +1027,9 @@ def main():
     updater.idle()
 
 if __name__ == "__main__":
+    # Start the Flask web server in a separate thread
+    web_server_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_server_thread.start()
+
+    # Start the bot (main bot logic)
     main()
