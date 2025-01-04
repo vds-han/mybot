@@ -83,11 +83,6 @@ def test():
     logger.info("Test route accessed.")
     return "Test route is working!", 200
 
-@app.route("/debug/routes", methods=['GET'])
-def debug_routes():
-    routes = [str(rule) for rule in app.url_map.iter_rules()]
-    return {"routes": routes}, 200
-
 @app.route(f"/webhook/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook_handler():
     if request.method == "POST":
@@ -97,12 +92,6 @@ def webhook_handler():
         return "OK", 200
     else:
         abort(403)
-        
-@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=['POST'])
-def webhook_test():
-    data = request.get_json(force=True)
-    logger.info(f"Test Webhook Received Data: {data}")
-    return {"status": "Webhook received", "data": data}, 200
 
 
 # Utility Functions
