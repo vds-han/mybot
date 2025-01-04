@@ -990,9 +990,9 @@ def process_message_queue():
         except Exception as e:
             logger.error(f"❌ Error sending queued message: {e}")
 
-def main():
-    """Main function to start the bot and MQTT client."""
-    logger.info("Starting bot...")
+def initialize_bot():
+    """Initialize the Telegram bot and related services."""
+    logger.info("Initializing bot...")
 
     # Initialize the database (create tables if they don't exist)
     try:
@@ -1052,5 +1052,10 @@ def main():
 
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
 
+# Start the bot in a background thread when the module is imported
+bot_thread = threading.Thread(target=initialize_bot, daemon=True)
+bot_thread.start()
+
 if __name__ == "__main__":
-    main()
+    # Start the Flask app (used when running locally with `python bot.py`)
+    app.run(host="0.0.0.0", port=PORT)
