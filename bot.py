@@ -16,10 +16,12 @@ from telegram import (
 )
 from telegram.ext import (
     Updater, CommandHandler, CallbackQueryHandler,
-    MessageHandler, Filters, CallbackContext
+    MessageHandler, Filters, CallbackContext, Dispatcher
 )
 from telegram.error import BadRequest
-from flask import Flask
+from flask import (
+    Flask, request, abort
+)
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from database import (
@@ -29,15 +31,6 @@ from database import (
 
 # Create a Flask app
 app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Bot is running!"
-
-def run_web_server():
-    # Bind the server to the port provided by Render
-    port = int(os.environ.get("PORT", 5000))
-    #app.run(host="0.0.0.0", port=port)
 
 # Configure logging
 logging.basicConfig(
@@ -52,12 +45,46 @@ mqtt.Client().enable_logger(logger)
 # Load environment variables from .env file
 load_dotenv()
 
+# Environment Variables
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
+PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
+
+MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost")
+MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
+
+# Image URLs
 COMPANY_IMAGE_URL = "https://img.freepik.com/premium-photo/earth-day-poster-background-illustration-vertical-concept-design-poster-greeting-card-flat-lay_108611-3386.jpg"  # Main menu image
 CHECK_BALANCE_IMAGE_URL = "https://i.pinimg.com/originals/9f/ba/ad/9fbaad5f595b5099c1950d211de4892b.jpg"
 VIEW_EVENTS_IMAGE_URL = "https://i.pinimg.com/originals/c3/b7/30/c3b73071bac1d682526046adbcbf5777.jpg"
 REDEEM_REWARDS_IMAGE_URL ="https://static.vecteezy.com/system/resources/previews/000/299/799/original/earth-day-vector-design-for-card-poster-banner-flyer.jpg"
 LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5f.jpg"
 VIEW_DISPOSAL_HISTORY_IMAGE_URL =  "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
+
+# Initialize the message queue
+message_queue = queue.Queue()
+
+# Initialize the Updater and Dispatcher globally
+updater = Updater(TOKEN, use_context=True)
+dispatcher = updater.dispatcher
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+@app.route(f"/{TOKEN}", methods=['POST'])
+def webhook_handler():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), updater.bot)
+        dispatcher.process_update(update)
+        return "OK", 200
+    else:
+        abort(403)
 
 # Utility Functions
 def generate_logger(name):
@@ -80,6 +107,7 @@ def main_menu():
         [InlineKeyboardButton("🗑️ View Disposal History", callback_data="view_disposal_history")],  # New button
     ]
     return InlineKeyboardMarkup(keyboard)
+
 def safe_edit_message_media(query, media_url, caption, reply_markup=None):
     """Safely edit the message media (photo) and caption."""
     try:
@@ -101,9 +129,6 @@ def safe_edit_message_media(query, media_url, caption, reply_markup=None):
         logger.error(f"Unexpected error in safe_edit_message_media: {e}")
         raise e
 
-
-
-
 def delete_current_event_poster(context: CallbackContext, chat_id: int):
     """Delete the current event poster if it exists."""
     current_photo_message = context.user_data.get('current_event_photo')
@@ -120,8 +145,7 @@ def delete_current_event_poster(context: CallbackContext, chat_id: int):
             logger.error(f"Unexpected error deleting event poster message: {e}")
         finally:
             context.user_data.pop('current_event_photo', None)
-import qrcode
-    
+
 def send_main_menu(chat_id, context, text="What would you like to do?"):
     cache_busted_url = f"{COMPANY_IMAGE_URL}?v={int(time.time())}"  # Add a unique query string to prevent caching
 
@@ -131,7 +155,6 @@ def send_main_menu(chat_id, context, text="What would you like to do?"):
         caption=text,
         reply_markup=main_menu()
     )
-
 
 def send_notification_message(bot, chat_id: int, text: str):
     """Send a notification message to the user."""
@@ -238,7 +261,6 @@ def active_user(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("⚠️ No active user found.")
     db.close()
-
 
 def register_contact(update: Update, context: CallbackContext):
     """Handle contact sharing and register the user."""
@@ -516,7 +538,6 @@ def process_reward_selection(update: Update, context: CallbackContext):
         logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed {reward.name}")
     db.close()
 
-
 def get_tng_pin(reward_name: str):
     """Retrieve an unused TNG pin from the appropriate file based on reward name."""
     # Determine which file to read based on reward_name
@@ -582,6 +603,7 @@ def view_events(update: Update, context: CallbackContext):
             reply_markup=main_menu(),
         )
     db.close()
+
 def event_details(update: Update, context: CallbackContext):
     """Display selected event's details with poster and appropriate image."""
     query = update.callback_query
@@ -656,7 +678,6 @@ def event_details(update: Update, context: CallbackContext):
             reply_markup=main_menu()
         )
     db.close()
-
 
 def view_disposal_history_callback(update: Update, context: CallbackContext):
     """Display the user's disposal history with appropriate image."""
@@ -884,7 +905,6 @@ class MQTTClientHandler:
         except Exception as e:
             logger.error(f"❌ Error in on_message: {e}")
 
-
     def assign_points(self, rubbish_type):
         """Assign points to the currently active user for the bin."""
         db = SessionLocal()
@@ -955,6 +975,21 @@ class MQTTClientHandler:
         finally:
             db.close()
 
+def process_message_queue():
+    """Process and send messages from the queue."""
+    while True:
+        try:
+            message = message_queue.get()
+            if message:
+                send_notification_message(
+                    updater.bot,
+                    chat_id=message["chat_id"],
+                    text=message["text"],
+                )
+                logger.info(f"📨 Sent notification to chat ID {message['chat_id']}.")
+        except Exception as e:
+            logger.error(f"❌ Error sending queued message: {e}")
+
 def main():
     """Main function to start the bot and MQTT client."""
     logger.info("Starting bot...")
@@ -967,58 +1002,29 @@ def main():
         logger.error(f"❌ Failed to initialize the database: {e}")
         return
 
-    # Load environment variables
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
-    PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
-
-    MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost")
-    MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
-    MQTT_USERNAME = os.getenv("MQTT_USERNAME")
-    MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
-    MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
-    ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
-
     # Validate essential environment variables
     if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
         logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
         return
 
-    # Initialize the Telegram bot
-    try:
-        updater = Updater(TOKEN, use_context=True, request_kwargs={"read_timeout": 20, "connect_timeout": 20})
-        dp = updater.dispatcher
-        logger.info("✅ Telegram bot initialized successfully.")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Telegram bot: {e}")
-        return
-
-    # Initialize a thread-safe queue for notifications
-    message_queue = queue.Queue()
-
-    # Command handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("active_user", active_user))
-
-    # Message handlers
-    dp.add_handler(MessageHandler(Filters.contact, register_contact))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, collect_name))  # Collect name input
-
-    # Callback query handlers
-    dp.add_handler(CallbackQueryHandler(check_balance_callback, pattern="^check_balance$"))
-    dp.add_handler(CallbackQueryHandler(redeem_rewards_callback, pattern="^redeem_rewards$"))
-    dp.add_handler(CallbackQueryHandler(process_reward_selection, pattern="^redeem_"))
-    dp.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
-    dp.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
-    dp.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
-    dp.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
-    dp.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
+    # Register handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("active_user", active_user))
+    dispatcher.add_handler(MessageHandler(Filters.contact, register_contact))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, collect_name))
+    dispatcher.add_handler(CallbackQueryHandler(check_balance_callback, pattern="^check_balance$"))
+    dispatcher.add_handler(CallbackQueryHandler(redeem_rewards_callback, pattern="^redeem_rewards$"))
+    dispatcher.add_handler(CallbackQueryHandler(process_reward_selection, pattern="^redeem_"))
+    dispatcher.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
+    dispatcher.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
+    dispatcher.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    dispatcher.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
+    dispatcher.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
 
     # Register the error handler
-    dp.add_error_handler(error_handler)
+    dispatcher.add_error_handler(error_handler)
 
-    # Set the webhook for the bot
+    # Set the webhook (Flask route will handle incoming updates)
     try:
         updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
         logger.info(f"✅ Webhook set to {WEBHOOK_URL}/{TOKEN}")
@@ -1042,22 +1048,9 @@ def main():
         return
 
     # Start the message queue processing in a separate thread
-    def process_message_queue():
-        while True:
-            try:
-                message = message_queue.get()
-                if message:
-                    send_notification_message(
-                        updater.bot,
-                        chat_id=message["chat_id"],
-                        text=message["text"],
-                    )
-                    logger.info(f"📨 Sent notification to chat ID {message['chat_id']}.")
-            except Exception as e:
-                logger.error(f"❌ Error sending queued message: {e}")
-
     threading.Thread(target=process_message_queue, daemon=True).start()
 
-    # Flask web server does not need to run manually here; Render will handle it
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
 
+if __name__ == "__main__":
+    main()
