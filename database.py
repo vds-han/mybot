@@ -8,12 +8,15 @@ from sqlalchemy.orm import sessionmaker
 Base = declarative_base()
 
 # Database Connection
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")  # Default to SQLite for simplicity
+DATABASE_URL = os.getenv("DATABASE_URL")  # Removed default to enforce external DB
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set.")
 
 # Create the SQLAlchemy engine
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    connect_args={"sslmode": "require"} if DATABASE_URL.startswith("postgresql") else {}
 )
 
 # Create a configured "Session" class
