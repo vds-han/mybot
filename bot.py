@@ -338,12 +338,7 @@ def check_balance_callback(update: Update, context: CallbackContext):
     user = db.query(User).filter_by(telegram_id=user_id).first()
 
     if user:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return  # Stop processing if the query cannot be answered
-        
+        query.answer()
         message_text = (
             f"👤 *{user.name}*, your current balance is: *{user.points} points*.\n\nWhat would you like to do next?"
         )
@@ -359,12 +354,7 @@ def check_balance_callback(update: Update, context: CallbackContext):
             reply_markup=main_menu(),
         )
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return  # Stop processing if the query cannot be answered
-
+        query.answer()
         safe_edit_message_media(
             query,
             COMPANY_IMAGE_URL,  # Use an appropriate image URL
@@ -390,11 +380,7 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
             message += f"{reward.id}. {reward.name} - {reward.points_required} points\n"
             keyboard.append([InlineKeyboardButton(f"{reward.name}", callback_data=f"redeem_{reward.id}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")])
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return  # Stop processing if the query cannot be answered
+        query.answer()
         
         # Update the message media with the Redeem Rewards image
         safe_edit_message_media(
@@ -404,12 +390,7 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return  # Stop processing if the query cannot be answered
-        
+        query.answer()
         safe_edit_message_media(
             query,
             REDEEM_REWARDS_IMAGE_URL,  # Use appropriate image
@@ -430,12 +411,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
         try:
             reward_id = int(data.split('_')[1])
         except (IndexError, ValueError):
-            try:
-                query.answer()
-            except Exception as e:
-                logger.warning(f"Failed to answer callback query: {e}")
-                return  # Stop processing if the query cannot be answered
-        
+            query.answer()
             safe_edit_message_media(
                 query,
                 COMPANY_IMAGE_URL,  # Use a fallback image URL here
@@ -445,12 +421,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
             db.close()
             return
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
-            
+        query.answer()
         db.close()
         return
 
@@ -458,11 +429,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
 
     # Check if user is registered
     if not user:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             COMPANY_IMAGE_URL,  # Use a fallback image URL here
@@ -476,11 +443,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
     reward = db.query(Reward).filter_by(id=reward_id).first()
 
     if not reward:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             COMPANY_IMAGE_URL,  # Use a fallback image URL here
@@ -491,11 +454,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
         db.close()
         return
     if user.points < reward.points_required:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             COMPANY_IMAGE_URL,  # Use a fallback image URL here
@@ -506,11 +465,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
         db.close()
         return
     if reward.quantity_available <= 0:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             COMPANY_IMAGE_URL,  # Use a fallback image URL here
@@ -545,11 +500,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
             db.commit()
 
             # Send the TNG pin to the user
-        try:
             query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
             safe_edit_message_media(
                 query,
                 REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption success
@@ -562,11 +513,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
             logger.info(f"{user.name} (ID: {user.telegram_id}) received TNG PIN: {tng_pin}")
         else:
             # No TNG pin available, do not deduct points
-            try:
-                query.answer()
-            except Exception as e:
-                logger.warning(f"Failed to answer callback query: {e}")
-                return 
+            query.answer()
             safe_edit_message_media(
                 query,
                 REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption failure
@@ -590,11 +537,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
         db.commit()
 
         # Send congratulations
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption success
@@ -642,11 +585,7 @@ def get_tng_pin(reward_name: str):
 def view_events(update: Update, context: CallbackContext):
     """Display the events menu with buttons and delete the event poster if it exists."""
     query = update.callback_query
-    try:
-        query.answer()
-    except Exception as e:
-        logger.warning(f"Failed to answer callback query: {e}")
-        return 
+    query.answer()
     db = SessionLocal()
 
     # Delete the current event poster if it exists
@@ -668,11 +607,7 @@ def view_events(update: Update, context: CallbackContext):
             reply_markup=reply_markup
         )
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             VIEW_EVENTS_IMAGE_URL,  
@@ -684,11 +619,7 @@ def view_events(update: Update, context: CallbackContext):
 def event_details(update: Update, context: CallbackContext):
     """Display selected event's details with poster and appropriate image."""
     query = update.callback_query
-    try:
-        query.answer()
-    except Exception as e:
-        logger.warning(f"Failed to answer callback query: {e}")
-        return 
+    query.answer()
     db = SessionLocal()
 
     # Extract event ID from callback data
@@ -804,11 +735,7 @@ def view_disposal_history_callback(update: Update, context: CallbackContext):
             reply_markup=main_menu(),
         )
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
         safe_edit_message_media(
             query,
             VIEW_DISPOSAL_HISTORY_IMAGE_URL,  # Use appropriate image
@@ -830,11 +757,7 @@ def leaderboard_callback(update: Update, context: CallbackContext):
         message = "🏆 *Leaderboard:*\n\n"
         for idx, user in enumerate(top_users, start=1):
             message += f"{idx}. {user.name} - {user.points} points\n"
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
 
         # Delete the current event poster if it exists
         delete_current_event_poster(context, query.message.chat_id)
@@ -847,11 +770,7 @@ def leaderboard_callback(update: Update, context: CallbackContext):
             reply_markup=main_menu(),
         )
     else:
-        try:
-            query.answer()
-        except Exception as e:
-            logger.warning(f"Failed to answer callback query: {e}")
-            return 
+        query.answer()
 
         # Delete the current event poster if it exists
         delete_current_event_poster(context, query.message.chat_id)
@@ -868,11 +787,7 @@ def leaderboard_callback(update: Update, context: CallbackContext):
 def main_menu_callback(update: Update, context: CallbackContext):
     """Return to the main menu and update the image."""
     query = update.callback_query
-    try:
-        query.answer()
-    except Exception as e:
-        logger.warning(f"Failed to answer callback query: {e}")
-        return 
+    query.answer()
     db = SessionLocal()
 
     # Delete the current event poster if it exists
