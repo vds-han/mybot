@@ -77,6 +77,12 @@ dispatcher = updater.dispatcher
 def home():
     return "Bot is running!"
 
+# **Add a Test Route for Debugging**
+@app.route("/test", methods=['GET', 'POST'])
+def test():
+    logger.info("Test route accessed.")
+    return "Test route is working!", 200
+
 @app.route(f"/webhook/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook_handler():
     if request.method == "POST":
@@ -86,6 +92,7 @@ def webhook_handler():
         return "OK", 200
     else:
         abort(403)
+
 
 # Utility Functions
 def generate_logger(name):
@@ -995,6 +1002,9 @@ def initialize_bot():
     """Initialize the Telegram bot and related services."""
     logger.info("Initializing bot...")
 
+    # **Log the Webhook Secret**
+    logger.info(f"Webhook Secret: {WEBHOOK_SECRET}")
+
     # Initialize the database (create tables if they don't exist)
     try:
         init_db()
@@ -1025,7 +1035,7 @@ def initialize_bot():
     # Register the error handler
     dispatcher.add_error_handler(error_handler)
 
-    # Set the webhook using the custom secret path
+    # **Set the webhook using the custom secret path**
     try:
         updater.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{WEBHOOK_SECRET}")
         logger.info(f"✅ Webhook set to {WEBHOOK_URL}/webhook/{WEBHOOK_SECRET}")
