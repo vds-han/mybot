@@ -27,6 +27,18 @@ from database import (
     Redemption, Event, UserSession, Configuration
 )
 
+from models import SensitiveInfoFilter
+
+# Add the filter to the logger
+sensitive_filter = SensitiveInfoFilter([TOKEN, os.getenv("DATABASE_URL"), os.getenv("API_KEY")])
+
+# Add the filter to all handlers
+for handler in logging.getLogger().handlers:
+    handler.addFilter(sensitive_filter)
+
+# Or add it to a specific logger
+logger.addFilter(sensitive_filter)
+
 # Create a Flask app
 app = Flask(__name__)
 
