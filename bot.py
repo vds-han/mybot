@@ -16,12 +16,10 @@ from telegram import (
 )
 from telegram.ext import (
     Updater, CommandHandler, CallbackQueryHandler,
-    MessageHandler, Filters, CallbackContext, Dispatcher
+    MessageHandler, Filters, CallbackContext
 )
 from telegram.error import BadRequest
-from flask import (
-    Flask, request, abort
-)
+from flask import Flask, request, abort
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from database import (
@@ -1056,6 +1054,7 @@ def initialize_bot():
 bot_thread = threading.Thread(target=initialize_bot, daemon=True)
 bot_thread.start()
 
+# Only run the Flask app if the script is executed directly
 if __name__ == "__main__":
     # Start the Flask app (used when running locally with `python bot.py`)
     app.run(host="0.0.0.0", port=PORT)
