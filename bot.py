@@ -1,5 +1,5 @@
 # bot.py
-
+import time
 import os
 import logging
 import qrcode
@@ -10,16 +10,16 @@ import queue
 import uuid
 from datetime import datetime
 from pytz import timezone, utc
-from flask import Flask, request, abort, jsonify
 from telegram import (
     Update, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, ParseMode, InputMediaPhoto, Bot
+    ReplyKeyboardMarkup, KeyboardButton, ParseMode, InputMediaPhoto
 )
 from telegram.ext import (
-    Dispatcher, CommandHandler, CallbackQueryHandler,
+    Updater, CommandHandler, CallbackQueryHandler,
     MessageHandler, Filters, CallbackContext
 )
 from telegram.error import BadRequest
+from flask import Flask, request, abort
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from database import (
@@ -27,22 +27,34 @@ from database import (
     Redemption, Event, UserSession, Configuration
 )
 
+# Create a Flask app
+app = Flask(__name__)
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)  # Define logger here
+
+# Enable logging for MQTT
+mqtt.Client().enable_logger(logger)
+
 # Load environment variables from .env file
 load_dotenv()
 
 # Environment Variables
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip()
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
 PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
 
-MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost").strip()
+MQTT_BROKER_URL = os.getenv("MQTT_BROKER_URL", "localhost")
 MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "").strip()
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "").strip()
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal").strip()
-ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "").strip()  # For error notifications
+MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
 
 # Image URLs
 COMPANY_IMAGE_URL = "https://img.freepik.com/premium-photo/earth-day-poster-background-illustration-vertical-concept-design-poster-greeting-card-flat-lay_108611-3386.jpg"  # Main menu image
@@ -52,64 +64,36 @@ REDEEM_REWARDS_IMAGE_URL ="https://static.vecteezy.com/system/resources/previews
 LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5f.jpg"
 VIEW_DISPOSAL_HISTORY_IMAGE_URL =  "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
 
-# Initialize the Flask app
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Log critical environment variables for debugging
-logger.info(f"Loaded TELEGRAM_BOT_TOKEN: {'*' * 10 if TOKEN else 'Not Set'}")
-logger.info(f"Loaded BOT_USERNAME: '{BOT_USERNAME}'")
-logger.info(f"Loaded WEBHOOK_SECRET: '{WEBHOOK_SECRET}'")
-logger.info(f"Loaded WEBHOOK_URL: '{WEBHOOK_URL}'")
-
-# Initialize Bot and Dispatcher
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, use_context=True)
-
-# Initialize logging for MQTT
-mqtt.Client().enable_logger(logger)
-
 # Initialize the message queue
 message_queue = queue.Queue()
 
+# Initialize the Updater and Dispatcher globally
+updater = Updater(TOKEN, use_context=True)
+dispatcher = updater.dispatcher
+
 @app.route("/")
 def home():
-    return "Bot is running!", 200
+    return "Bot is running!"
 
-# Debug route to list all registered routes
-@app.route("/debug/routes", methods=["GET"])
-def debug_routes():
-    routes = [str(rule) for rule in app.url_map.iter_rules()]
-    return jsonify({"routes": routes}), 200
-
-# Test route for debugging
-@app.route("/test", methods=['GET', 'POST'])
-def test():
-    logger.info("Test route accessed.")
-    return "Test route is working!", 200
-
-# Webhook route
-@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=['POST'])
+@app.route(f"/{TOKEN}", methods=['POST'])
 def webhook_handler():
     if request.method == "POST":
-        try:
-            update = Update.de_json(request.get_json(force=True), bot)
-            logger.info(f"Received update: {update.to_dict()}")
-            dispatcher.process_update(update)
-            return "OK", 200
-        except Exception as e:
-            logger.error(f"Error processing update: {e}")
-            abort(500)
+        update = Update.de_json(request.get_json(force=True), updater.bot)
+        dispatcher.process_update(update)
+        return "OK", 200
     else:
         abort(403)
 
 # Utility Functions
+def generate_logger(name):
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
 
 def main_menu():
     """Main menu inline keyboard."""
@@ -191,8 +175,6 @@ def request_registration(update: Update, context: CallbackContext):
         "📱 Please share your phone number to register:",
         reply_markup=reply_markup,
     )
-
-# Command Handlers
 
 def start(update: Update, context: CallbackContext):
     """Handle the /start command with optional activation parameter."""
@@ -333,8 +315,6 @@ def collect_name(update: Update, context: CallbackContext):
     # Clear the registration step
     context.user_data.pop('registration_step', None)
     db.close()
-
-# Callback Query Handlers
 
 def check_balance_callback(update: Update, context: CallbackContext):
     """Display the user's current balance and update the image."""
@@ -808,88 +788,12 @@ def main_menu_callback(update: Update, context: CallbackContext):
     )
     db.close()
 
-def event_details(update: Update, context: CallbackContext):
-    """Display selected event's details with poster and appropriate image."""
-    query = update.callback_query
-    query.answer()
-    db = SessionLocal()
-
-    # Extract event ID from callback data
-    try:
-        event_id = int(query.data.split('_')[1])
-    except (IndexError, ValueError) as e:
-        logger.error(f"Error extracting event ID: {e}")
-        safe_edit_message_media(
-            query,
-            VIEW_EVENTS_IMAGE_URL,  # Use appropriate image URL
-            "❌ Invalid event selection. Please try again.",
-            reply_markup=main_menu()
-        )
-        db.close()
-        return
-
-    # Query the event from the database
-    event = db.query(Event).filter_by(id=event_id).first()
-    if event:
-        # Prepare the event message
-        message = (
-            f"📅 *{event.name}*\n"
-            f"🗓 *Date:* {event.date.strftime('%Y-%m-%d')}\n"
-            f"📝 *Description:* {event.description}"
-        )
-
-        # Create reply markup with "Back to Main Menu" button
-        reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")]
-        ])
-
-        # Delete the previous photo message if it exists
-        delete_current_event_poster(context, query.message.chat_id)
-
-        # Check for a valid poster URL
-        if event.poster_url:
-            try:
-                # Update the message media with the Event Poster image
-                safe_edit_message_media(
-                    query,
-                    event.poster_url,  # Correct image URL
-                    message,           # Correct caption
-                    reply_markup=reply_markup
-                )
-            except Exception as e:
-                logger.error(f"Error sending photo for event {event.name}: {e}")
-                # Fallback to text-only message if the photo fails
-                safe_edit_message_media(
-                    query,
-                    VIEW_EVENTS_IMAGE_URL,  # Use appropriate fallback image
-                    f"{message}\n\n(Unable to load image)",
-                    reply_markup=reply_markup
-                )
-        else:
-            # If no poster URL, send text-only message with a default image
-            safe_edit_message_media(
-                query,
-                VIEW_EVENTS_IMAGE_URL,  # Correct image URL
-                message,                 # Correct caption
-                reply_markup=reply_markup
-            )
-    else:
-        # Event not found
-        safe_edit_message_media(
-            query,
-            VIEW_EVENTS_IMAGE_URL,      # Correct image URL
-            "❌ Event not found. Please select a valid event.",
-            reply_markup=main_menu()
-        )
-    db.close()
-
-# Error Handler
-
 def error_handler(update: object, context: CallbackContext):
     """Handle all errors."""
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     
     # Notify the administrator
+    ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")
     if ADMIN_TELEGRAM_ID:
         try:
             context.bot.send_message(
@@ -1076,7 +980,7 @@ def process_message_queue():
             message = message_queue.get()
             if message:
                 send_notification_message(
-                    bot,
+                    updater.bot,
                     chat_id=message["chat_id"],
                     text=message["text"],
                 )
@@ -1094,24 +998,37 @@ def initialize_bot():
         logger.info("✅ Database initialized successfully.")
     except Exception as e:
         logger.error(f"❌ Failed to initialize the database: {e}")
-        exit(1)  # Exit if database initialization fails
+        return
 
     # Validate essential environment variables
-    if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL, WEBHOOK_SECRET]):
-        logger.critical("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, WEBHOOK_URL, and WEBHOOK_SECRET must be set in environment variables.")
-        exit(1)
+    if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
+        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
+        return
 
-    # Register handlers (already done above)
-    # Note: Handlers have been added to the dispatcher above.
+    # Register handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("active_user", active_user))
+    dispatcher.add_handler(MessageHandler(Filters.contact, register_contact))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, collect_name))
+    dispatcher.add_handler(CallbackQueryHandler(check_balance_callback, pattern="^check_balance$"))
+    dispatcher.add_handler(CallbackQueryHandler(redeem_rewards_callback, pattern="^redeem_rewards$"))
+    dispatcher.add_handler(CallbackQueryHandler(process_reward_selection, pattern="^redeem_"))
+    dispatcher.add_handler(CallbackQueryHandler(view_events, pattern="^view_events$"))
+    dispatcher.add_handler(CallbackQueryHandler(leaderboard_callback, pattern="^leaderboard$"))
+    dispatcher.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    dispatcher.add_handler(CallbackQueryHandler(event_details, pattern="^event_"))
+    dispatcher.add_handler(CallbackQueryHandler(view_disposal_history_callback, pattern="^view_disposal_history$"))
 
-    # Set the webhook using the custom secret path
+    # Register the error handler
+    dispatcher.add_error_handler(error_handler)
+
+    # Set the webhook (Flask route will handle incoming updates)
     try:
-        webhook_url = f"{WEBHOOK_URL}/webhook/{WEBHOOK_SECRET}"
-        bot.set_webhook(url=webhook_url)
-        logger.info(f"✅ Webhook set to {webhook_url}")
+        updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+        logger.info(f"✅ Webhook set to {WEBHOOK_URL}/{TOKEN}")
     except Exception as e:
         logger.error(f"❌ Failed to set webhook: {e}")
-        exit(1)  # Exit if webhook setup fails
+        return
 
     # Initialize the MQTT client
     try:
@@ -1126,19 +1043,16 @@ def initialize_bot():
         logger.info("✅ MQTT client initialized successfully.")
     except Exception as e:
         logger.error(f"❌ Failed to initialize MQTT client: {e}")
-        exit(1)  # Exit if MQTT client fails
+        return
 
     # Start the message queue processing in a separate thread
     threading.Thread(target=process_message_queue, daemon=True).start()
-    logger.info("🔄 Message queue processing started.")
 
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
 
-# Register the error handler
-dispatcher.add_error_handler(error_handler)
-
-# Initialize the bot (set up webhook, MQTT, etc.)
-initialize_bot()
+# Start the bot in a background thread when the module is imported
+bot_thread = threading.Thread(target=initialize_bot, daemon=True)
+bot_thread.start()
 
 # Only run the Flask app if the script is executed directly
 if __name__ == "__main__":
