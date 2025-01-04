@@ -29,7 +29,7 @@ from database import (
 
 from models import SensitiveInfoFilter
 
-# Load environment variables from .env fil
+# Load environment variables from .env file
 load_dotenv()
 # Environment Variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -1064,11 +1064,10 @@ def initialize_bot():
 
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
 
-# Start the bot in a background thread when the module is imported
-bot_thread = threading.Thread(target=initialize_bot, daemon=True)
-bot_thread.start()
-
-# Only run the Flask app if the script is executed directly
+# Remove the background thread and call initialize_bot() directly
 if __name__ == "__main__":
+    # Initialize the bot
+    initialize_bot()
+
     # Start the Flask app (used when running locally with `python bot.py`)
     app.run(host="0.0.0.0", port=PORT)
