@@ -29,32 +29,8 @@ from database import (
 
 from models import SensitiveInfoFilter
 
-# Create a Flask app
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)  # Define logger here
-
-# Add the filter to the logger
-sensitive_filter = SensitiveInfoFilter([TOKEN, os.getenv("DATABASE_URL"), os.getenv("API_KEY")])
-
-# Add the filter to all handlers
-for handler in logging.getLogger().handlers:
-    handler.addFilter(sensitive_filter)
-
-# Or add it to a specific logger
-logger.addFilter(sensitive_filter)
-
-# Enable logging for MQTT
-mqtt.Client().enable_logger(logger)
-
-# Load environment variables from .env file
+# Load environment variables from .env fil
 load_dotenv()
-
 # Environment Variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
@@ -68,6 +44,12 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "rubbish/disposal")
 ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")  # For error notifications
 
+# Ensure critical environment variables are defined
+if not TOKEN:
+    raise ValueError("Environment variable TELEGRAM_BOT_TOKEN is not set.")
+if not WEBHOOK_URL:
+    raise ValueError("Environment variable WEBHOOK_URL is not set.")
+
 # Image URLs
 COMPANY_IMAGE_URL = "https://img.freepik.com/premium-photo/earth-day-poster-background-illustration-vertical-concept-design-poster-greeting-card-flat-lay_108611-3386.jpg"  # Main menu image
 CHECK_BALANCE_IMAGE_URL = "https://i.pinimg.com/originals/9f/ba/ad/9fbaad5f595b5099c1950d211de4892b.jpg"
@@ -75,6 +57,26 @@ VIEW_EVENTS_IMAGE_URL = "https://i.pinimg.com/originals/c3/b7/30/c3b73071bac1d68
 REDEEM_REWARDS_IMAGE_URL ="https://static.vecteezy.com/system/resources/previews/000/299/799/original/earth-day-vector-design-for-card-poster-banner-flyer.jpg"
 LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5f.jpg"
 VIEW_DISPOSAL_HISTORY_IMAGE_URL =  "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)  # Define logger here
+
+# Add the filter to all handlers
+for handler in logging.getLogger().handlers:
+    handler.addFilter(sensitive_filter)
+
+# Or add it to a specific logger
+logger.addFilter(sensitive_filter)
+
+# Enable logging for MQTT
+mqtt.Client().enable_logger(logger)
+
+# Create a Flask app
+app = Flask(__name__)
 
 # Initialize the message queue
 message_queue = queue.Queue()
