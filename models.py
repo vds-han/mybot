@@ -1,10 +1,28 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, BigInteger, UniqueConstraint  # Updated import
+from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import re
+import logging
 
 Base = declarative_base()
 
+# Sensitive Info Filter
+class SensitiveInfoFilter(logging.Filter):
+    """Filter to redact sensitive information like the bot token in logs."""
+    def __init__(self, sensitive_data: list):
+        super().__init__()
+        self.sensitive_data = sensitive_data
+
+    def filter(self, record):
+        if record.msg:
+            # Replace each sensitive string with a placeholder
+            for sensitive in self.sensitive_data:
+                record.msg = re.sub(rf"{sensitive}", "[REDACTED]", str(record.msg))
+        return True
+
+
+# Database Models
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -17,7 +35,7 @@ class User(Base):
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     redemptions = relationship("Redemption", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
-    # Removed the ActiveUser relationship since activation is now managed by Configuration
+
 
 class Reward(Base):
     __tablename__ = "rewards"
@@ -30,16 +48,18 @@ class Reward(Base):
     # Relationships
     redemptions = relationship("Redemption", back_populates="reward", cascade="all, delete-orphan")
 
+
 class Transaction(Base):
     __tablename__ = "transactions"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     points_change = Column(Integer, nullable=False)
     description = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # Use DateTime
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="transactions")
+
 
 class Redemption(Base):
     __tablename__ = "redemptions"
@@ -47,11 +67,12 @@ class Redemption(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     reward_id = Column(Integer, ForeignKey("rewards.id"), nullable=False)
     status = Column(String, default="Pending")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # Changed from Date to DateTime
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="redemptions")
     reward = relationship("Reward", back_populates="redemptions")
+
 
 class Event(Base):
     __tablename__ = "events"
@@ -60,6 +81,7 @@ class Event(Base):
     description = Column(String, nullable=True)
     date = Column(Date, nullable=False)
     poster_url = Column(String, nullable=True)
+
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
