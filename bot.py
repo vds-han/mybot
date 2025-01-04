@@ -1,4 +1,5 @@
 # bot.py
+
 import time
 import os
 import logging
@@ -27,25 +28,13 @@ from database import (
     Redemption, Event, UserSession, Configuration
 )
 
-# Create a Flask app
-app = Flask(__name__)
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)  # Define logger here
-
-# Enable logging for MQTT
-mqtt.Client().enable_logger(logger)
-
 # Load environment variables from .env file
 load_dotenv()
 
 # Environment Variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # New environment variable for the secret path
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render app's public URL, e.g., "https://your-app-name.onrender.com"
 PORT = int(os.getenv("PORT", 8443))  # Render sets the PORT environment variable automatically
 
@@ -64,6 +53,19 @@ REDEEM_REWARDS_IMAGE_URL ="https://static.vecteezy.com/system/resources/previews
 LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5f.jpg"
 VIEW_DISPOSAL_HISTORY_IMAGE_URL =  "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
 
+# Initialize the Flask app
+app = Flask(__name__)
+
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Enable logging for MQTT
+mqtt.Client().enable_logger(logger)
+
 # Initialize the message queue
 message_queue = queue.Queue()
 
@@ -75,10 +77,11 @@ dispatcher = updater.dispatcher
 def home():
     return "Bot is running!"
 
-@app.route(f"/{TOKEN}", methods=['POST'])
+@app.route(f"/webhook/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook_handler():
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), updater.bot)
+        logger.info(f"Received update: {update.to_dict()}")
         dispatcher.process_update(update)
         return "OK", 200
     else:
@@ -1001,8 +1004,8 @@ def initialize_bot():
         return
 
     # Validate essential environment variables
-    if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
-        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
+    if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL, WEBHOOK_SECRET]):
+        logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, WEBHOOK_URL, and WEBHOOK_SECRET must be set in environment variables.")
         return
 
     # Register handlers
@@ -1022,10 +1025,10 @@ def initialize_bot():
     # Register the error handler
     dispatcher.add_error_handler(error_handler)
 
-    # Set the webhook (Flask route will handle incoming updates)
+    # Set the webhook using the custom secret path
     try:
-        updater.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-        logger.info(f"✅ Webhook set to {WEBHOOK_URL}/{TOKEN}")
+        updater.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{WEBHOOK_SECRET}")
+        logger.info(f"✅ Webhook set to {WEBHOOK_URL}/webhook/{WEBHOOK_SECRET}")
     except Exception as e:
         logger.error(f"❌ Failed to set webhook: {e}")
         return
