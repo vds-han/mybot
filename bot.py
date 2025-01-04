@@ -65,12 +65,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)  # Define logger here
 
+sensitive_filter = SensitiveInfoFilter([TOKEN, os.getenv("DATABASE_URL"), os.getenv("API_KEY")])
+
 # Add the filter to all handlers
 for handler in logging.getLogger().handlers:
     handler.addFilter(sensitive_filter)
 
-# Or add it to a specific logger
-logger.addFilter(sensitive_filter)
 
 # Enable logging for MQTT
 mqtt.Client().enable_logger(logger)
