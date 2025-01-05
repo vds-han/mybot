@@ -525,35 +525,33 @@ def process_reward_selection(update: Update, context: CallbackContext):
             # Deduct points and update reward quantity
             user.points -= reward.points_required
             reward.quantity_available -= 1
-
-
+    
             # Log the transaction
             transaction = Transaction(
                 user_id=user.id,
                 points_change=-reward.points_required,
-                description=f"Redeemed reward: {reward.name}",
+                description=f"Redeemed reward: {reward.name} (PIN: {tng_pin})",
             )
             db.add(transaction)
             db.commit()
-
-            # Send the TNG pin to the user
+    
+            # Notify the user
             query.answer()
             safe_edit_message_media(
                 query,
-                REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption success
+                REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for success
                 f"🎉 *Congratulations*, {user.name}! You've successfully redeemed *{reward.name}*.\n"
-                f"🔑 *Your TNG PIN:* `{tng_pin}`\n"
+                f"🔑 *Your TNG PIN:* {tng_pin}\n"
                 f"💰 *Your remaining points:* {user.points}",
                 reply_markup=main_menu()
             )
-            # Log that the TNG pin was provided
-            logger.info(f"{user.name} (ID: {user.telegram_id}) received TNG PIN: {tng_pin}")
-        else:
-            # No TNG pin available, do not deduct points
+            logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed PIN: {tng_pin}")
+        except ValueError as e:
+            # Handle case where no TNG PINs are available
             query.answer()
             safe_edit_message_media(
                 query,
-                REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption failure
+                REDEEM_REWARDS_IMAGE_URL,  # Use a fallback image
                 f"❗️ *Sorry*, no TNG PINs are currently available for *{reward.name}*. Please contact support.",
                 reply_markup=main_menu()
             )
