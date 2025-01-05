@@ -112,7 +112,7 @@ def preload_images():
     Download and cache all required images at startup to reduce latency during message sending.
     
     Returns:
-        dict: A dictionary mapping image identifiers to InputFile objects or fallback URLs.
+        dict: A dictionary mapping image identifiers to BytesIO objects or fallback URLs.
     """
     images = {}
     image_urls = {
@@ -136,12 +136,14 @@ def preload_images():
                 images[name] = None
                 continue
             
-            images[name] = InputFile(io.BytesIO(response.content), filename=f"{name}.jpg")
+            # Store the image bytes
+            image_bytes = io.BytesIO(response.content)
+            image_bytes.name = f"{name}.jpg"  # Set a name attribute for InputFile
+            images[name] = image_bytes
             logger.info(f"✅ Preloaded image: {name}")
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Failed to preload image '{name}' from {url}: {e}")
-            # Optionally, set to None or a default image
-            images[name] = None
+            images[name] = None  # Optionally, set to None or a default image
     
     # Log the status of preloaded images
     for name, img in images.items():
@@ -151,6 +153,7 @@ def preload_images():
             logger.debug(f"Image '{name}' failed to load.")
     
     return images
+
 
 def main_menu():
     """Main menu inline keyboard."""
