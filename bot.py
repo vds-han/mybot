@@ -401,33 +401,41 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
         )
     db.close()
 
-def get_tng_pin(session: UserSession, reward: Reward, user: User) -> str:
-    """Retrieve an unused TNG pin for a specific reward and mark it as used."""
+def get_tng_pin(session: Session, reward: Reward, user: User) -> str:
+    """
+    Retrieves an unused TNG pin for a reward and marks it as used.
+    
+    Args:
+        session (Session): The active database session.
+        reward (Reward): The reward object for which the pin is being redeemed.
+        user (User): The user redeeming the reward.
+
+    Returns:
+        str: The TNG pin if available, or raises an exception if not.
+    """
     try:
-        # Fetch the first unused pin for the reward with row locking to prevent race conditions
-        tng_pin = session.query(TNGPin).with_for_update().filter(
+        # Query the first available unused TNG pin for the specified reward
+        tng_pin = session.query(TNGPin).filter(
             TNGPin.reward_id == reward.id,
             TNGPin.used == False
         ).first()
 
         if not tng_pin:
-            logger.warning(f"No available TNG PINs for reward '{reward.name}'.")
-            return None
+            raise ValueError(f"No unused TNG pins available for reward: {reward.name}")
 
         # Mark the pin as used
         tng_pin.used = True
         tng_pin.used_by = user.id
         tng_pin.used_at = datetime.utcnow()
+
+        # Commit the changes to the database
         session.commit()
 
-        logger.info(f"Assigned TNG PIN '{tng_pin.pin}' to user '{user.name}' (ID: {user.telegram_id}).")
         return tng_pin.pin
-
     except Exception as e:
-        session.rollback()
-        logger.error(f"Error retrieving TNG PIN: {e}")
-        return None
-
+        session.rollback()  # Rollback in case of an error
+        raise e
+        
 def process_reward_selection(update: Update, context: CallbackContext):
     """Process the reward selection and handle redemption."""
     query = update.callback_query
@@ -509,15 +517,15 @@ def process_reward_selection(update: Update, context: CallbackContext):
     logger.info(f"{user.name} (ID: {user.telegram_id}) is redeeming {reward.name}")
 
     # Handle TNG Rewards
-    if reward.name.lower() in ['tngrm5', 'tngrm10']:
-        # Retrieve an available TNG pin from the database
-        tng_pin = get_tng_pin(db, reward, user)
-
-        if tng_pin:
-            # Deduct points and reward quantity
+    if 'TNG' in reward.name.upper():
+        # Attempt to retrieve an available TNG pin
+        try:
+            tng_pin = get_tng_pin(db, reward, user)
+    
+            # Deduct points and update reward quantity
             user.points -= reward.points_required
             reward.quantity_available -= 1
-            db.commit()
+
 
             # Log the transaction
             transaction = Transaction(
