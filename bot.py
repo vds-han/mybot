@@ -5,6 +5,7 @@ import logging
 import qrcode
 import io
 import json
+import queue
 from datetime import datetime
 from pytz import timezone, utc
 from telegram import (
