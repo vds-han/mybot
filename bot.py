@@ -5,9 +5,6 @@ import logging
 import qrcode
 import io
 import json
-import threading
-import queue
-import uuid
 from datetime import datetime
 from pytz import timezone, utc
 from telegram import (
@@ -61,10 +58,11 @@ VIEW_DISPOSAL_HISTORY_IMAGE_URL = "https://i.pinimg.com/originals/ae/b3/20/aeb32
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO  # Change to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)  # Define logger here
 
+# Initialize SensitiveInfoFilter
 sensitive_filter = SensitiveInfoFilter([TOKEN, os.getenv("DATABASE_URL"), os.getenv("API_KEY")])
 
 # Add the filter to all handlers
@@ -113,7 +111,7 @@ def preload_images():
     Download and cache all required images at startup to reduce latency during message sending.
     
     Returns:
-        dict: A dictionary mapping image identifiers to InputFile objects.
+        dict: A dictionary mapping image identifiers to InputFile objects or fallback URLs.
     """
     images = {}
     image_urls = {
@@ -129,6 +127,14 @@ def preload_images():
         try:
             response = requests.get(url)
             response.raise_for_status()  # Raise an exception for HTTP errors
+            
+            # Verify the content type is an image
+            content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                logger.error(f"❌ URL does not point to an image: {url}")
+                images[name] = None
+                continue
+            
             images[name] = InputFile(io.BytesIO(response.content), filename=f"{name}.jpg")
             logger.info(f"✅ Preloaded image: {name}")
         except requests.exceptions.RequestException as e:
@@ -163,20 +169,46 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
         reply_markup (InlineKeyboardMarkup, optional): The reply markup for the message.
     """
     try:
-        media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
+        if not media_input:
+            logger.error("❌ media_input is None or empty. Cannot edit message media.")
+            return
+
+        # Validate media_input type
+        if isinstance(media_input, InputFile):
+            media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
+        elif isinstance(media_input, str):
+            media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
+        else:
+            logger.error("❌ Unsupported media_input type. Must be InputFile or URL string.")
+            return
+
+        # Check if the message contains a photo before attempting to edit
+        if not query.message.photo:
+            logger.error("❌ The message does not contain a photo to edit.")
+            query.message.reply_text("❌ Cannot edit media as the original message does not contain a photo.")
+            return
+
+        # Attempt to edit the message media
         query.edit_message_media(
             media=media,
             reply_markup=reply_markup if reply_markup else main_menu()
         )
+        logger.info("✅ Edited message media successfully.")
+
     except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
+        logger.error(f"BadRequest in safe_edit_message_media: {e.message}")
+        if "Message is not modified" in e.message:
+            pass  # Ignore if the message hasn't changed
+        elif "photo" in e.message.lower():
+            logger.error("❌ Issue with the photo provided.")
+        elif "caption" in e.message.lower():
+            logger.error("❌ Issue with the caption provided.")
         else:
-            logger.error(f"BadRequest in safe_edit_message_media: {e}")
-            raise e
+            logger.error(f"❌ BadRequest error: {e.message}")
+    except TelegramError as e:
+        logger.error(f"TelegramError in safe_edit_message_media: {e.message}")
     except Exception as e:
         logger.error(f"Unexpected error in safe_edit_message_media: {e}")
-        raise e
 
 def delete_current_event_poster(context: CallbackContext, chat_id: int):
     """Delete the current event poster if it exists."""
@@ -197,7 +229,7 @@ def delete_current_event_poster(context: CallbackContext, chat_id: int):
 
 def send_main_menu(chat_id, context, text="What would you like to do?"):
     """
-    Send the main menu to the user using the preloaded company image asynchronously.
+    Send the main menu to the user using the preloaded company image.
     
     Args:
         chat_id (int): The chat ID to send the message to.
@@ -215,19 +247,16 @@ def send_main_menu(chat_id, context, text="What would you like to do?"):
         )
         return
     
-    def send_photo():
-        try:
-            context.bot.send_photo(
-                chat_id=chat_id,
-                photo=company_image,
-                caption=text,
-                reply_markup=main_menu()
-            )
-        except Exception as e:
-            logger.error(f"❌ Failed to send main menu photo: {e}")
-    
-    # Send the photo asynchronously to prevent blocking
-    threading.Thread(target=send_photo, daemon=True).start()
+    try:
+        context.bot.send_photo(
+            chat_id=chat_id,
+            photo=company_image,
+            caption=text,
+            reply_markup=main_menu()
+        )
+        logger.info("✅ Sent main menu photo successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to send main menu photo: {e}")
 
 def send_notification_message(bot, chat_id: int, text: str):
     """Send a notification message to the user."""
@@ -277,14 +306,13 @@ def start(update: Update, context: CallbackContext):
                         previous_user = db.query(User).filter_by(id=config.active_user_id).first()
                         if previous_user and previous_user.id != user.id:
                             logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
-
-                # Activate the current user as the new active user
-                if not config:
+                else:
+                    # Create a new configuration if it doesn't exist
                     config = Configuration(active_user_id=user.id)
                     db.add(config)
-                else:
-                    config.active_user_id = user.id
 
+                # Activate the current user as the new active user
+                config.active_user_id = user.id
                 db.commit()
 
                 # Notify the user
@@ -408,8 +436,8 @@ def safe_answer_callback_query(query: CallbackQuery, context: CallbackContext) -
         error_message = str(e).lower()
         if "query is too old" in error_message or "invalid" in error_message:
             logger.info("Callback query expired or invalid. Reinforcing the menu.")
-            # Reinvoke the main menu asynchronously to prevent blocking
-            threading.Thread(target=send_main_menu, args=(query.message.chat_id, context, "What would you like to do?"), daemon=True).start()
+            # Reinvoke the main menu
+            send_main_menu(query.message.chat_id, context, "What would you like to do?")
         else:
             logger.error(f"Unhandled BadRequest when answering callback query: {e}")
             # Optionally, notify the user about an unexpected error
@@ -458,30 +486,16 @@ def view_disposal_history_callback(update: Update, context: CallbackContext):
                 disposal_history_image = preloaded_images.get('view_disposal_history')
                 if not disposal_history_image:
                     logger.error("❌ Disposal History image not preloaded.")
-                    # Fallback to text-only message
-                    safe_edit_message_media(
-                        query,
-                        VIEW_DISPOSAL_HISTORY_IMAGE_URL,  # Use fallback URL
-                        message,
-                        reply_markup=main_menu(),
-                    )
-                    return
+                    # Fallback to URL
+                    disposal_history_image = VIEW_DISPOSAL_HISTORY_IMAGE_URL
 
-                # Safely edit the message media with the Disposal History image asynchronously
-                def edit_media():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=disposal_history_image,
-                                caption=message,
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=main_menu()
-                        )
-                    except Exception as e:
-                        logger.error(f"❌ Failed to edit message media: {e}")
-
-                threading.Thread(target=edit_media, daemon=True).start()
+                # Edit the message media synchronously
+                safe_edit_message_media(
+                    query,
+                    disposal_history_image,
+                    message,
+                    reply_markup=main_menu()
+                )
         else:
             # Safely answer the callback query
             if safe_answer_callback_query(query, context):
@@ -500,7 +514,7 @@ def view_disposal_history_callback(update: Update, context: CallbackContext):
         db.close()
 
 def check_balance_callback(update: Update, context: CallbackContext):
-    """Display the user's current balance and update the image asynchronously."""
+    """Display the user's current balance and update the image."""
     query = update.callback_query
     user_id = query.from_user.id
     db = SessionLocal()
@@ -530,21 +544,13 @@ def check_balance_callback(update: Update, context: CallbackContext):
                     )
                     return
 
-                # Safely edit the message media with the Check Balance image asynchronously
-                def edit_media():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=check_balance_image,
-                                caption=message_text,
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=main_menu()
-                        )
-                    except Exception as e:
-                        logger.error(f"❌ Failed to edit message media: {e}")
-
-                threading.Thread(target=edit_media, daemon=True).start()
+                # Edit the message media synchronously
+                safe_edit_message_media(
+                    query,
+                    check_balance_image,
+                    message_text,
+                    reply_markup=main_menu()
+                )
         else:
             # Safely answer the callback query
             if safe_answer_callback_query(query, context):
@@ -555,6 +561,7 @@ def check_balance_callback(update: Update, context: CallbackContext):
                     "❌ You are not registered. Please use /start to register.",
                     reply_markup=main_menu()
                 )
+                logger.info(f"{user_id} - Failed redemption: User not registered.")
     except Exception as e:
         logger.error(f"Error in check_balance_callback: {e}")
         if query.message:
@@ -563,68 +570,55 @@ def check_balance_callback(update: Update, context: CallbackContext):
         db.close()
 
 def redeem_rewards_callback(update: Update, context: CallbackContext):
-    """Display the rewards menu with appropriate image asynchronously."""
+    """Display the rewards menu with appropriate image."""
     query = update.callback_query
     db = SessionLocal()
 
     try:
         # Safely answer the callback query
-        if safe_answer_callback_query(query, context):
-            # Delete the current event poster if it exists
-            delete_current_event_poster(context, query.message.chat_id)
+        if not safe_answer_callback_query(query, context):
+            return  # If answering failed, exit the handler
 
-            # Fetch available rewards
-            rewards = db.query(Reward).all()
-            if rewards:
-                message = "🎁 *Available Rewards:*\n\n"
-                keyboard = []
-                for reward in rewards:
-                    message += f"{reward.id}. {reward.name} - {reward.points_required} points\n"
-                    keyboard.append([InlineKeyboardButton(f"{reward.name}", callback_data=f"redeem_{reward.id}")])
-                keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")])
-                reply_markup = InlineKeyboardMarkup(keyboard)
+        # Delete the current event poster if it exists
+        delete_current_event_poster(context, query.message.chat_id)
 
-                # Get the preloaded redeem_rewards image
-                redeem_rewards_image = preloaded_images.get('redeem_rewards')
-                if not redeem_rewards_image:
-                    logger.error("❌ Redeem Rewards image not preloaded.")
-                    # Optionally, use fallback
-                    redeem_rewards_image = REDEEM_REWARDS_IMAGE_URL
+        # Fetch available rewards
+        rewards = db.query(Reward).all()
+        if rewards:
+            message = "🎁 *Available Rewards:*\n\n"
+            keyboard = []
+            for reward in rewards:
+                message += f"{reward.id}. {reward.name} - {reward.points_required} points\n"
+                keyboard.append([InlineKeyboardButton(f"{reward.name}", callback_data=f"redeem_{reward.id}")])
+            keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-                # Safely edit the message media with the Redeem Rewards image asynchronously
-                def edit_media():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=redeem_rewards_image,
-                                caption=f"{message}\nSelect a reward to redeem:",
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=reply_markup
-                        )
-                    except Exception as e:
-                        logger.error(f"❌ Failed to edit message media: {e}")
+            # Get the preloaded redeem_rewards image
+            redeem_rewards_image = preloaded_images.get('redeem_rewards')
+            if not redeem_rewards_image:
+                logger.error("❌ Redeem Rewards image not preloaded.")
+                # Optionally, use fallback URL
+                redeem_rewards_image = REDEEM_REWARDS_IMAGE_URL
 
-                threading.Thread(target=edit_media, daemon=True).start()
-            else:
-                # No rewards available
-                redeem_rewards_image = preloaded_images.get('redeem_rewards') or REDEEM_REWARDS_IMAGE_URL
-                message = "🛍️ No rewards available at the moment.\n\nWhat would you like to do next?"
-                
-                def edit_media():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=redeem_rewards_image,
-                                caption=message,
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=main_menu()
-                        )
-                    except Exception as e:
-                        logger.error(f"❌ Failed to edit message media: {e}")
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                redeem_rewards_image,
+                f"{message}\nSelect a reward to redeem:",
+                reply_markup=reply_markup
+            )
+        else:
+            # No rewards available
+            redeem_rewards_image = preloaded_images.get('redeem_rewards') or REDEEM_REWARDS_IMAGE_URL
+            message = "🛍️ No rewards available at the moment.\n\nWhat would you like to do next?"
 
-                threading.Thread(target=edit_media, daemon=True).start()
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                redeem_rewards_image,
+                message,
+                reply_markup=main_menu()
+            )
     except Exception as e:
         logger.error(f"Error in redeem_rewards_callback: {e}")
         if query.message:
@@ -633,7 +627,7 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
         db.close()
 
 def process_reward_selection(update: Update, context: CallbackContext):
-    """Process the reward selection and handle redemption asynchronously."""
+    """Process the reward selection and handle redemption."""
     query = update.callback_query
     user_id = query.from_user.id
     db = SessionLocal()
@@ -741,23 +735,16 @@ def process_reward_selection(update: Update, context: CallbackContext):
                 # Get the preloaded redeem_rewards image
                 redeem_rewards_image = preloaded_images.get('redeem_rewards') or REDEEM_REWARDS_IMAGE_URL
 
-                # Safely edit the message media with the Redeem Rewards image asynchronously
-                def send_success():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=redeem_rewards_image,
-                                caption=success_message,
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=main_menu()
-                        )
-                        # Log that the TNG pin was provided
-                        logger.info(f"{user.name} (ID: {user.telegram_id}) received TNG PIN: {tng_pin}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to send redemption success message: {e}")
+                # Edit the message media synchronously
+                safe_edit_message_media(
+                    query,
+                    redeem_rewards_image,
+                    success_message,
+                    reply_markup=main_menu()
+                )
 
-                threading.Thread(target=send_success, daemon=True).start()
+                # Log that the TNG pin was provided
+                logger.info(f"{user.name} (ID: {user.telegram_id}) received TNG PIN: {tng_pin}")
             else:
                 # No TNG pin available, do not deduct points
                 redeem_rewards_image = preloaded_images.get('redeem_rewards') or REDEEM_REWARDS_IMAGE_URL
@@ -765,21 +752,14 @@ def process_reward_selection(update: Update, context: CallbackContext):
                     f"❗️ *Sorry*, no TNG PINs are currently available for *{reward.name}*. Please contact support."
                 )
 
-                def send_failure():
-                    try:
-                        query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=redeem_rewards_image,
-                                caption=failure_message,
-                                parse_mode=ParseMode.MARKDOWN
-                            ),
-                            reply_markup=main_menu()
-                        )
-                        logger.warning(f"No TNG PINs available for {user.name} (ID: {user.telegram_id}) for reward {reward.name}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to send redemption failure message: {e}")
-
-                threading.Thread(target=send_failure, daemon=True).start()
+                # Edit the message media synchronously
+                safe_edit_message_media(
+                    query,
+                    redeem_rewards_image,
+                    failure_message,
+                    reply_markup=main_menu()
+                )
+                logger.warning(f"No TNG PINs available for {user.name} (ID: {user.telegram_id}) for reward {reward.name}")
         else:
             # Non-TNG rewards: Deduct points and reward quantity
             user.points -= reward.points_required
@@ -804,23 +784,16 @@ def process_reward_selection(update: Update, context: CallbackContext):
             # Get the preloaded redeem_rewards image
             redeem_rewards_image = preloaded_images.get('redeem_rewards') or REDEEM_REWARDS_IMAGE_URL
 
-            # Safely edit the message media with the Redeem Rewards image asynchronously
-            def send_success():
-                try:
-                    query.edit_message_media(
-                        media=InputMediaPhoto(
-                            media=redeem_rewards_image,
-                            caption=success_message,
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=main_menu()
-                    )
-                    # Log successful redemption
-                    logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed {reward.name}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to send redemption success message: {e}")
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                redeem_rewards_image,
+                success_message,
+                reply_markup=main_menu()
+            )
 
-            threading.Thread(target=send_success, daemon=True).start()
+            # Log successful redemption
+            logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed {reward.name}")
     except Exception as e:
         logger.error(f"Error in process_reward_selection: {e}")
         if query.message:
@@ -861,7 +834,7 @@ def get_tng_pin(reward_name: str):
         return None
 
 def view_events(update: Update, context: CallbackContext):
-    """Display the events menu with buttons and delete the event poster if it exists asynchronously."""
+    """Display the events menu with buttons and delete the event poster if it exists."""
     query = update.callback_query
     query.answer()
     db = SessionLocal()
@@ -885,40 +858,25 @@ def view_events(update: Update, context: CallbackContext):
             # Get the preloaded view_events image
             view_events_image = preloaded_images.get('view_events') or VIEW_EVENTS_IMAGE_URL
 
-            # Safely edit the message media with the View Events image asynchronously
-            def edit_media():
-                try:
-                    query.edit_message_media(
-                        media=InputMediaPhoto(
-                            media=view_events_image,
-                            caption="📅 *Select an event to view details:*",
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=reply_markup
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Failed to edit message media: {e}")
-
-            threading.Thread(target=edit_media, daemon=True).start()
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                view_events_image,
+                "📅 *Select an event to view details:*",
+                reply_markup=reply_markup
+            )
         else:
             # No events available
             view_events_image = preloaded_images.get('view_events') or VIEW_EVENTS_IMAGE_URL
             message = "🛑 No events available at the moment.\n\nWhat would you like to do next?"
 
-            def edit_media():
-                try:
-                    query.edit_message_media(
-                        media=InputMediaPhoto(
-                            media=view_events_image,
-                            caption=message,
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=main_menu()
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Failed to edit message media: {e}")
-
-            threading.Thread(target=edit_media, daemon=True).start()
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                view_events_image,
+                message,
+                reply_markup=main_menu()
+            )
     except Exception as e:
         logger.error(f"Error in view_events: {e}")
         if query.message:
@@ -927,7 +885,7 @@ def view_events(update: Update, context: CallbackContext):
         db.close()
 
 def event_details(update: Update, context: CallbackContext):
-    """Display selected event's details with poster and appropriate image asynchronously."""
+    """Display selected event's details with poster and appropriate image."""
     query = update.callback_query
     query.answer()
     db = SessionLocal()
@@ -987,21 +945,13 @@ def event_details(update: Update, context: CallbackContext):
 
                 event_poster = preloaded_images.get(event.name)
                 if event_poster:
-                    # Safely edit the message media with the Event Poster image asynchronously
-                    def edit_media():
-                        try:
-                            query.edit_message_media(
-                                media=InputMediaPhoto(
-                                    media=event_poster,
-                                    caption=message,
-                                    parse_mode=ParseMode.MARKDOWN
-                                ),
-                                reply_markup=reply_markup
-                            )
-                        except Exception as e:
-                            logger.error(f"❌ Failed to edit message media: {e}")
-
-                    threading.Thread(target=edit_media, daemon=True).start()
+                    # Edit the message media synchronously
+                    safe_edit_message_media(
+                        query,
+                        event_poster,
+                        message,
+                        reply_markup=reply_markup
+                    )
                 else:
                     # If event poster failed to preload, use fallback
                     safe_edit_message_media(
@@ -1035,7 +985,7 @@ def event_details(update: Update, context: CallbackContext):
         db.close()
 
 def leaderboard_callback(update: Update, context: CallbackContext):
-    """Display the leaderboard of users and delete the event poster if it exists asynchronously."""
+    """Display the leaderboard of users."""
     query = update.callback_query
     user_id = query.from_user.id
     db = SessionLocal()
@@ -1059,49 +1009,34 @@ def leaderboard_callback(update: Update, context: CallbackContext):
             # Get the preloaded leaderboard image
             leaderboard_image = preloaded_images.get('leaderboard') or LEADERBOARD_IMAGE_URL
 
-            # Safely edit the message media with the Leaderboard image asynchronously
-            def edit_media():
-                try:
-                    query.edit_message_media(
-                        media=InputMediaPhoto(
-                            media=leaderboard_image,
-                            caption=message,
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=main_menu(),
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Failed to edit message media: {e}")
-
-            threading.Thread(target=edit_media, daemon=True).start()
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                leaderboard_image,
+                message,
+                reply_markup=main_menu(),
+            )
         else:
             # No users found on the leaderboard
             leaderboard_image = preloaded_images.get('leaderboard') or LEADERBOARD_IMAGE_URL
             message = "🛑 No users found on the leaderboard.\n\nWhat would you like to do next?"
 
-            def edit_media():
-                try:
-                    query.edit_message_media(
-                        media=InputMediaPhoto(
-                            media=leaderboard_image,
-                            caption=message,
-                            parse_mode=ParseMode.MARKDOWN
-                        ),
-                        reply_markup=main_menu(),
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Failed to edit message media: {e}")
-
-            threading.Thread(target=edit_media, daemon=True).start()
+            # Edit the message media synchronously
+            safe_edit_message_media(
+                query,
+                leaderboard_image,
+                message,
+                reply_markup=main_menu(),
+            )
     except Exception as e:
         logger.error(f"Error in leaderboard_callback: {e}")
         if query.message:
-            query.message.reply_text("Malaysians generate approximately 39,078 tonnes of solid waste daily, averaging 1.17 kg per person. ")
+            query.message.reply_text("Malaysians generate approximately 39,078 tonnes of solid waste daily, averaging 1.17 kg per person.")
     finally:
         db.close()
 
 def main_menu_callback(update: Update, context: CallbackContext):
-    """Return to the main menu and update the image asynchronously."""
+    """Return to the main menu and update the image."""
     query = update.callback_query
     db = SessionLocal()
 
@@ -1119,21 +1054,13 @@ def main_menu_callback(update: Update, context: CallbackContext):
         # Prepare the caption
         caption = "What would you like to do?"
 
-        # Safely edit the message media with the main menu image asynchronously
-        def edit_media():
-            try:
-                query.edit_message_media(
-                    media=InputMediaPhoto(
-                        media=company_image,
-                        caption=caption,
-                        parse_mode=ParseMode.MARKDOWN
-                    ),
-                    reply_markup=main_menu()
-                )
-            except Exception as e:
-                logger.error(f"❌ Failed to edit message media: {e}")
-
-        threading.Thread(target=edit_media, daemon=True).start()
+        # Edit the message media synchronously
+        safe_edit_message_media(
+            query,
+            company_image,
+            caption,
+            reply_markup=main_menu()
+        )
     except Exception as e:
         logger.error(f"Error in main_menu_callback: {e}")
         if query.message:
