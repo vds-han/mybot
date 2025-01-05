@@ -1,4 +1,5 @@
 # bot.py
+
 import time
 import os
 import logging
@@ -31,6 +32,7 @@ from models import SensitiveInfoFilter
 
 # Load environment variables from .env file
 load_dotenv()
+
 # Environment Variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME")  # e.g., "YourBotUsername"
@@ -54,9 +56,9 @@ if not WEBHOOK_URL:
 COMPANY_IMAGE_URL = "https://img.freepik.com/premium-photo/earth-day-poster-background-illustration-vertical-concept-design-poster-greeting-card-flat-lay_108611-3386.jpg"  # Main menu image
 CHECK_BALANCE_IMAGE_URL = "https://i.pinimg.com/originals/9f/ba/ad/9fbaad5f595b5099c1950d211de4892b.jpg"
 VIEW_EVENTS_IMAGE_URL = "https://i.pinimg.com/originals/c3/b7/30/c3b73071bac1d682526046adbcbf5777.jpg"
-REDEEM_REWARDS_IMAGE_URL ="https://static.vecteezy.com/system/resources/previews/000/299/799/original/earth-day-vector-design-for-card-poster-banner-flyer.jpg"
-LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5f.jpg"
-VIEW_DISPOSAL_HISTORY_IMAGE_URL =  "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
+REDEEM_REWARDS_IMAGE_URL = "https://static.vecteezy.com/system/resources/previews/000/299/799/original/earth-day-vector-design-for-card-poster-banner-flyer.jpg"
+LEADERBOARD_IMAGE_URL = "https://i.pinimg.com/736x/2c/be/b1/2cbeb106cee6a2a2776ff0ba5e3cee5b.jpg"
+VIEW_DISPOSAL_HISTORY_IMAGE_URL = "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
 
 # Configure logging
 logging.basicConfig(
@@ -65,12 +67,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)  # Define logger here
 
+# Apply sensitive info filter
 sensitive_filter = SensitiveInfoFilter([TOKEN, os.getenv("DATABASE_URL"), os.getenv("API_KEY")])
 
 # Add the filter to all handlers
 for handler in logging.getLogger().handlers:
     handler.addFilter(sensitive_filter)
-
 
 # Enable logging for MQTT
 mqtt.Client().enable_logger(logger)
@@ -399,6 +401,33 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
         )
     db.close()
 
+def get_tng_pin(session: Session, reward: Reward, user: User) -> str:
+    """Retrieve an unused TNG pin for a specific reward and mark it as used."""
+    try:
+        # Fetch the first unused pin for the reward with row locking to prevent race conditions
+        tng_pin = session.query(TNGPin).with_for_update().filter(
+            TNGPin.reward_id == reward.id,
+            TNGPin.used == False
+        ).first()
+
+        if not tng_pin:
+            logger.warning(f"No available TNG PINs for reward '{reward.name}'.")
+            return None
+
+        # Mark the pin as used
+        tng_pin.used = True
+        tng_pin.used_by = user.id
+        tng_pin.used_at = datetime.utcnow()
+        session.commit()
+
+        logger.info(f"Assigned TNG PIN '{tng_pin.pin}' to user '{user.name}' (ID: {user.telegram_id}).")
+        return tng_pin.pin
+
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error retrieving TNG PIN: {e}")
+        return None
+
 def process_reward_selection(update: Update, context: CallbackContext):
     """Process the reward selection and handle redemption."""
     query = update.callback_query
@@ -479,10 +508,10 @@ def process_reward_selection(update: Update, context: CallbackContext):
     # Log redeem attempt
     logger.info(f"{user.name} (ID: {user.telegram_id}) is redeeming {reward.name}")
 
-    # Example handling for special rewards (e.g., "TNG")
-    if 'TNG' in reward.name.upper():
-        # Attempt to retrieve an available TNG pin based on reward name
-        tng_pin = get_tng_pin(reward.name)
+    # Handle TNG Rewards
+    if reward.name.lower() in ['tngrm5', 'tngrm10']:
+        # Retrieve an available TNG pin from the database
+        tng_pin = get_tng_pin(db, reward, user)
 
         if tng_pin:
             # Deduct points and reward quantity
@@ -505,7 +534,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
                 query,
                 REDEEM_REWARDS_IMAGE_URL,  # Use a valid image URL for reward redemption success
                 f"🎉 *Congratulations*, {user.name}! You've successfully redeemed *{reward.name}*.\n"
-                f"🔑 *Your TNG PIN:* {tng_pin}\n"
+                f"🔑 *Your TNG PIN:* `{tng_pin}`\n"
                 f"💰 *Your remaining points:* {user.points}",
                 reply_markup=main_menu()
             )
@@ -522,7 +551,8 @@ def process_reward_selection(update: Update, context: CallbackContext):
             )
             logger.warning(f"No TNG PINs available for {user.name} (ID: {user.telegram_id}) for reward {reward.name}")
     else:
-        # Non-TNG rewards: Deduct points and reward quantity
+        # Handle non-TNG rewards if applicable
+        # Example:
         user.points -= reward.points_required
         reward.quantity_available -= 1
         db.commit()
@@ -550,46 +580,11 @@ def process_reward_selection(update: Update, context: CallbackContext):
         logger.info(f"{user.name} (ID: {user.telegram_id}) redeemed {reward.name}")
     db.close()
 
-def get_tng_pin(reward_name: str):
-    """Retrieve an unused TNG pin from the appropriate file based on reward name."""
-    # Determine which file to read based on reward_name
-    if 'RM5' in reward_name.upper():
-        pin_file = 'tng_pins_rm5.txt'
-    elif 'RM10' in reward_name.upper():
-        pin_file = 'tng_pins_rm10.txt'
-    else:
-        # Unknown reward amount, cannot retrieve pin
-        logger.warning(f"Unknown TNG reward amount in reward name: {reward_name}")
-        return None
-
-    # Open the appropriate file containing TNG pins
-    try:
-        with open(pin_file, 'r') as f:
-            pins = f.readlines()
-        # Find the first unused pin
-        for idx, line in enumerate(pins):
-            pin = line.strip()
-            if pin and not pin.startswith('#USED#'):
-                # Mark it as used
-                pins[idx] = '#USED#' + pin + '\n'
-                # Write back the updated pins
-                with open(pin_file, 'w') as f:
-                    f.writelines(pins)
-                return pin
-        # No available pins
-        return None
-    except FileNotFoundError:
-        logger.error(f"TNG pin file not found: {pin_file}")
-        return None
-
 def view_events(update: Update, context: CallbackContext):
     """Display the events menu with buttons and delete the event poster if it exists."""
     query = update.callback_query
     query.answer()
     db = SessionLocal()
-
-    # Delete the current event poster if it exists
-    delete_current_event_poster(context, query.message.chat_id)
 
     events = db.query(Event).order_by(Event.date).all()
     if events:
@@ -651,9 +646,6 @@ def event_details(update: Update, context: CallbackContext):
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")]
         ])
 
-        # Delete the previous photo message if it exists
-        delete_current_event_poster(context, query.message.chat_id)
-
         # Check for a valid poster URL
         if event.poster_url:
             try:
@@ -703,7 +695,7 @@ def view_disposal_history_callback(update: Update, context: CallbackContext):
     user = db.query(User).filter_by(telegram_id=user_id).first()
 
     if user:
-        # Fetch the user's transactions
+        # Fetch the user's transactions related to disposal
         transactions = (
             db.query(Transaction)
             .filter(Transaction.user_id == user.id, Transaction.description.ilike("%Disposed%"))
