@@ -63,7 +63,7 @@ VIEW_DISPOSAL_HISTORY_IMAGE_URL = "https://i.pinimg.com/originals/ae/b3/20/aeb32
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Set to DEBUG for detailed logs
 )
 logger = logging.getLogger(__name__)  # Define logger here
 
@@ -224,6 +224,7 @@ def start(update: Update, context: CallbackContext):
                             chat_id=previous_user.telegram_id,
                             text="🔔 You have been deactivated as the active user for the bin."
                         )
+                        logger.info(f"Notified previous active user: {previous_user.name} (ID: {previous_user.telegram_id}).")
                     except Exception as e:
                         logger.warning(f"Unable to notify previous user: {e}")
 
@@ -329,6 +330,9 @@ def collect_name(update: Update, context: CallbackContext):
 
     # Assign as active user if no active user exists
     config = db.query(Configuration).first()
+    logger.debug(f"Configuration Retrieved: {config}")
+    logger.debug(f"Current active_user_id: {config.active_user_id if config else 'None'}")
+
     if not config:
         config = Configuration(active_user_id=user.id)
         db.add(config)
@@ -346,7 +350,15 @@ def collect_name(update: Update, context: CallbackContext):
             f"Start disposing to earn points."
         )
         logger.info(f"Active user set to {user.name} (ID: {user.telegram_id}).")
+    elif config.active_user_id == user.id:
+        # User is already the active user
+        update.message.reply_text(
+            f"🎉 You are already the active user for the bin!\n"
+            f"Start disposing to earn points."
+        )
+        logger.info(f"User {user.name} (ID: {user.telegram_id}) is already active.")
     else:
+        # Assigning a new active user should be handled via /start with activate_bin
         update.message.reply_text(
             f"🎉 Thank you, *{user.name}*! Your registration is now complete. Use /start to invoke the bot's main menu.",
             parse_mode=ParseMode.MARKDOWN
@@ -426,7 +438,7 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
         )
     db.close()
 
-def get_tng_pin(session: UserSession, reward: Reward, user: User) -> str:
+def get_tng_pin(session: SessionLocal, reward: Reward, user: User) -> str:
     """
     Retrieves an unused TNG pin for a reward and marks it as used.
     
@@ -547,11 +559,11 @@ def process_reward_selection(update: Update, context: CallbackContext):
         # Attempt to retrieve an available TNG pin
         try:
             tng_pin = get_tng_pin(db, reward, user)
-    
+
             # Deduct points and update reward quantity
             user.points -= reward.points_required
             reward.quantity_available -= 1
-    
+
             # Log the transaction
             transaction = Transaction(
                 user_id=user.id,
@@ -560,7 +572,7 @@ def process_reward_selection(update: Update, context: CallbackContext):
             )
             db.add(transaction)
             db.commit()
-    
+
             # Notify the user
             query.answer()
             safe_edit_message_media(
@@ -1038,17 +1050,24 @@ def initialize_bot():
         logger.error(f"❌ Failed to initialize the database: {e}")
         return
 
-    # Ensure a Configuration row exists
+    # Ensure only one Configuration row exists
     db = SessionLocal()
     try:
-        config = db.query(Configuration).first()
-        if not config:
+        config_count = db.query(Configuration).count()
+        if config_count == 0:
             config = Configuration(active_user_id=None)
             db.add(config)
             db.commit()
             logger.info("✅ Created default Configuration row.")
+        elif config_count > 1:
+            logger.warning("⚠️ Multiple Configuration rows found. Keeping the first and deleting the rest.")
+            configs = db.query(Configuration).order_by(Configuration.id).all()
+            for cfg in configs[1:]:
+                db.delete(cfg)
+            db.commit()
+            logger.info("✅ Cleaned up extra Configuration rows.")
     except Exception as e:
-        logger.error(f"❌ Failed to ensure Configuration row: {e}")
+        logger.error(f"❌ Failed to ensure single Configuration row: {e}")
     finally:
         db.close()
 
@@ -1101,7 +1120,6 @@ def initialize_bot():
     threading.Thread(target=process_message_queue, daemon=True).start()
 
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
-
 
 # Remove the background thread and call initialize_bot() directly
 if __name__ == "__main__":
