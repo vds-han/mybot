@@ -252,27 +252,7 @@ def start(update: Update, context: CallbackContext):
             update.message.reply_text("👋 Welcome! Please register by sharing your phone number to continue.")
             request_registration(update, context)
 
-            # Ensure the user is registered in the database
-            db.commit()  # Ensure the user is fully saved in the database
-
-            # After registration, make the user active if no active user exists
-            user = db.query(User).filter_by(telegram_id=user_id).first()  # Re-fetch the user after registration
-            if user:
-                if not config or not config.active_user_id:
-                    # Assign this new user as the active user
-                    if not config:
-                        config = Configuration(active_user_id=user.id)
-                        db.add(config)
-                    else:
-                        config.active_user_id = user.id
-
-                    db.commit()
-
-                    update.message.reply_text(
-                        f"🎉 You have been registered and are now the active user for the bin!\n"
-                        f"Start disposing to earn points."
-                    )
-                    logger.info(f"New user {user.name} (ID: {user.telegram_id}) set as active user.")
+            # Note: Removed active user assignment logic from here
 
     except Exception as e:
         logger.error(f"❌ Error processing /start command for user {user_id}: {e}")
@@ -326,6 +306,7 @@ def register_contact(update: Update, context: CallbackContext):
     update.message.reply_text(
         "📝 Thank you! Please enter your name to complete registration."
     )
+    logger.info(f"User {user_id} shared contact and is awaiting name input.")
     db.close()
 
 def collect_name(update: Update, context: CallbackContext):
@@ -336,6 +317,7 @@ def collect_name(update: Update, context: CallbackContext):
 
     # Validate the registration step
     if not user or 'registration_step' not in context.user_data or context.user_data['registration_step'] != 'awaiting_name':
+        logger.warning(f"User {user_id} sent unexpected input during registration.")
         update.message.reply_text("❌ Unexpected input. Use /start to register.")
         db.close()
         return
@@ -343,12 +325,33 @@ def collect_name(update: Update, context: CallbackContext):
     # Store the name
     user.name = update.message.text.strip()
     db.commit()
+    logger.info(f"User {user_id} has registered with name: {user.name}")
 
-    # Inform the user that registration is complete
-    update.message.reply_text(
-        f"🎉 Thank you, *{user.name}*! Your registration is now complete. Use /start to invoke the bot's main menu.",
-        parse_mode=ParseMode.MARKDOWN
-    )
+    # Assign as active user if no active user exists
+    config = db.query(Configuration).first()
+    if not config:
+        config = Configuration(active_user_id=user.id)
+        db.add(config)
+        db.commit()
+        update.message.reply_text(
+            f"🎉 You have been registered and are now the active user for the bin!\n"
+            f"Start disposing to earn points."
+        )
+        logger.info(f"Configuration created. Active user set to {user.name} (ID: {user.telegram_id}).")
+    elif not config.active_user_id:
+        config.active_user_id = user.id
+        db.commit()
+        update.message.reply_text(
+            f"🎉 You have been registered and are now the active user for the bin!\n"
+            f"Start disposing to earn points."
+        )
+        logger.info(f"Active user set to {user.name} (ID: {user.telegram_id}).")
+    else:
+        update.message.reply_text(
+            f"🎉 Thank you, *{user.name}*! Your registration is now complete. Use /start to invoke the bot's main menu.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        logger.info(f"User {user.name} (ID: {user.telegram_id}) registered but not set as active user.")
 
     # Clear the registration step
     context.user_data.pop('registration_step', None)
