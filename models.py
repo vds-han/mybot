@@ -1,12 +1,13 @@
 from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, BigInteger
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from base import Base  # Import the shared Base from database.py
-import logging
 import re
-print("models.py is being imported")
-print(f"Base instance in models: {id(Base)}")
+import logging
 
+Base = declarative_base()
+
+# Sensitive Info Filter
 class SensitiveInfoFilter(logging.Filter):
     """Filter to redact sensitive information like the bot token in logs."""
     def __init__(self, sensitive_data: list):
@@ -19,6 +20,7 @@ class SensitiveInfoFilter(logging.Filter):
             for sensitive in self.sensitive_data:
                 record.msg = re.sub(rf"{sensitive}", "[REDACTED]", str(record.msg))
         return True
+
 
 # Database Models
 class User(Base):
@@ -96,4 +98,3 @@ class Configuration(Base):
     __tablename__ = "configuration"
     id = Column(Integer, primary_key=True, index=True)
     active_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-
