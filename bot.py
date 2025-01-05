@@ -427,7 +427,8 @@ def get_tng_pin(session: UserSession, reward: Reward, user: User) -> str:
         tng_pin.used = True
         tng_pin.used_by = user.id
         tng_pin.used_at = datetime.utcnow()
-
+        logger.info(f"TNG PIN {tng_pin.pin} redeemed by user {user.name} (ID: {user.id}) at {tng_pin.used_at}")
+        
         # Commit the changes to the database
         session.commit()
 
