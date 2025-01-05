@@ -211,7 +211,7 @@ def start(update: Update, context: CallbackContext):
         if user:
             # If the user exists, handle the optional "activate_bin" parameter
             if args and args[0] == "activate_bin":
-                # Handle QR code activation
+                # Check if there's an active user in the configuration table
                 previous_user = None
                 if config and config.active_user_id:
                     previous_user = db.query(User).filter_by(id=config.active_user_id).first()
@@ -227,7 +227,7 @@ def start(update: Update, context: CallbackContext):
                     except Exception as e:
                         logger.warning(f"Unable to notify previous user: {e}")
 
-                # Ensure only one Configuration row exists
+                # Assign the current user as the active user
                 if not config:
                     config = Configuration(active_user_id=user.id)
                     db.add(config)
@@ -249,26 +249,35 @@ def start(update: Update, context: CallbackContext):
                 send_main_menu(chat_id, context, text=f"Hello {user.name}! Welcome back.")
         else:
             # If the user is new
-            if args and args[0] == "activate_bin":
-                # User scanned the QR code but is not registered
-                update.message.reply_text(
-                    "🚫 You need to register first. Please share your phone number to register."
-                )
-                request_registration(update, context)
-                logger.info(f"User {user_id} attempted activation without registration.")
-            else:
-                # Regular /start command for a new user
-                update.message.reply_text(
-                    "👋 Welcome! Please register by sharing your phone number to continue."
-                )
-                request_registration(update, context)
-                logger.info(f"New user (ID: {user_id}) prompted to register.")
+            update.message.reply_text("👋 Welcome! Please register by sharing your phone number to continue.")
+            request_registration(update, context)
+
+            # After registration, make the user active if no active user exists
+            if not config or not config.active_user_id:
+                # Assign this new user as the active user
+                user = db.query(User).filter_by(telegram_id=user_id).first()  # Re-fetch the user after registration
+                if user:
+                    if not config:
+                        config = Configuration(active_user_id=user.id)
+                        db.add(config)
+                    else:
+                        config.active_user_id = user.id
+
+                    db.commit()
+
+                    update.message.reply_text(
+                        f"🎉 You have been registered and are now the active user for the bin!\n"
+                        f"Start disposing to earn points."
+                    )
+                    logger.info(f"New user {user.name} (ID: {user.telegram_id}) set as active user.")
+
     except Exception as e:
         logger.error(f"❌ Error processing /start command for user {user_id}: {e}")
         update.message.reply_text("🚫 An error occurred while processing your request. Please try again later.")
     finally:
         db.close()
         logger.info(f"Database session closed for user {user_id}.")
+
 
 def active_user(update: Update, context: CallbackContext):
     db = SessionLocal()
