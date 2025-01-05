@@ -25,7 +25,7 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from database import (
     init_db, SessionLocal, User, Reward, Transaction,
-    Redemption, Event, UserSession, Configuration, TNGPins
+    Redemption, Event, UserSession, Configuration, TNGPin
 )
 
 from models import SensitiveInfoFilter
