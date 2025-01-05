@@ -39,7 +39,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Import models explicitly at the module level
-from models import User, Reward, Transaction, Redemption, Event, UserSession, Configuration  # Ensure all models are imported
+from models import User, Reward, Transaction, Redemption, Event, UserSession, Configuration,TNGPin  # Ensure all models are imported
 
 def init_db():
     """
