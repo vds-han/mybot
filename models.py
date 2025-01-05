@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, BigInteger
+# models.py
+
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Date
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -20,7 +22,7 @@ class SensitiveInfoFilter(logging.Filter):
             for sensitive in self.sensitive_data:
                 record.msg = re.sub(rf"{sensitive}", "[REDACTED]", str(record.msg))
         return True
-        
+
 class TNGPin(Base):
     __tablename__ = 'tng_pins'
 
@@ -35,11 +37,13 @@ class TNGPin(Base):
     reward = relationship("Reward", back_populates="tng_pins")
     user = relationship("User", back_populates="tng_pins")
 
-# Database Models
+    def __repr__(self):
+        return f"<TNGPin(pin='{self.pin}', reward_id={self.reward_id}, used={self.used})>"
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    telegram_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    telegram_id = Column(Integer, unique=True, index=True, nullable=False)
     phone_number = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=True)
     points = Column(Integer, default=0)
@@ -50,10 +54,13 @@ class User(Base):
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     tng_pins = relationship("TNGPin", back_populates="user")
 
+    def __repr__(self):
+        return f"<User(name='{self.name}', telegram_id={self.telegram_id}, points={self.points})>"
+
 class Reward(Base):
     __tablename__ = "rewards"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String, unique=True, nullable=False)  # Ensure uniqueness
     description = Column(String, nullable=True)
     points_required = Column(Integer, nullable=False)
     quantity_available = Column(Integer, default=0)
@@ -61,6 +68,9 @@ class Reward(Base):
     # Relationships
     redemptions = relationship("Redemption", back_populates="reward", cascade="all, delete-orphan")
     tng_pins = relationship("TNGPin", back_populates="reward")
+
+    def __repr__(self):
+        return f"<Reward(name='{self.name}', points_required={self.points_required}, quantity_available={self.quantity_available})>"
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -73,6 +83,8 @@ class Transaction(Base):
     # Relationships
     user = relationship("User", back_populates="transactions")
 
+    def __repr__(self):
+        return f"<Transaction(user_id={self.user_id}, points_change={self.points_change}, description='{self.description}')>"
 
 class Redemption(Base):
     __tablename__ = "redemptions"
@@ -86,6 +98,8 @@ class Redemption(Base):
     user = relationship("User", back_populates="redemptions")
     reward = relationship("Reward", back_populates="redemptions")
 
+    def __repr__(self):
+        return f"<Redemption(user_id={self.user_id}, reward_id={self.reward_id}, status='{self.status}')>"
 
 class Event(Base):
     __tablename__ = "events"
@@ -95,19 +109,26 @@ class Event(Base):
     date = Column(Date, nullable=False)
     poster_url = Column(String, nullable=True)
 
+    def __repr__(self):
+        return f"<Event(name='{self.name}', date={self.date})>"
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    start_time = Column(BigInteger, nullable=False)  # Epoch timestamp in milliseconds
-    end_time = Column(BigInteger, nullable=False)    # Epoch timestamp in milliseconds
+    start_time = Column(Integer, nullable=False)  # Epoch timestamp in milliseconds
+    end_time = Column(Integer, nullable=False)    # Epoch timestamp in milliseconds
 
     # Relationships
     user = relationship("User", back_populates="sessions")
 
+    def __repr__(self):
+        return f"<UserSession(user_id={self.user_id}, start_time={self.start_time}, end_time={self.end_time})>"
 
 class Configuration(Base):
     __tablename__ = "configuration"
     id = Column(Integer, primary_key=True, index=True)
     active_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    def __repr__(self):
+        return f"<Configuration(active_user_id={self.active_user_id})>"
