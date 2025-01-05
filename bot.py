@@ -59,7 +59,7 @@ VIEW_DISPOSAL_HISTORY_IMAGE_URL = "https://i.pinimg.com/originals/ae/b3/20/aeb32
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO  # Change to DEBUG for more detailed logs
+    level=logging.DEBUG  # Change to DEBUG for more detailed logs
 )
 logger = logging.getLogger(__name__)  # Define logger here
 
@@ -143,10 +143,14 @@ def preload_images():
             # Optionally, set to None or a default image
             images[name] = None
     
+    # Log the status of preloaded images
+    for name, img in images.items():
+        if img:
+            logger.debug(f"Image '{name}' loaded successfully.")
+        else:
+            logger.debug(f"Image '{name}' failed to load.")
+    
     return images
-
-# Initialize a global dictionary to store preloaded images
-preloaded_images = {}
 
 def main_menu():
     """Main menu inline keyboard."""
@@ -162,7 +166,7 @@ def main_menu():
 def safe_edit_message_media(query, media_input, caption, reply_markup=None):
     """
     Safely edit the message media (photo) and caption.
-    
+
     Args:
         query (CallbackQuery): The callback query object.
         media_input (InputFile or str): The media to send (InputFile for preloaded images or URL).
@@ -177,11 +181,17 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
         # Validate media_input type
         if isinstance(media_input, InputFile):
             media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
+            logger.debug(f"Media is InputFile: {media_input}")
         elif isinstance(media_input, str):
             media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
+            logger.debug(f"Media is URL string: {media_input}")
         else:
             logger.error("❌ Unsupported media_input type. Must be InputFile or URL string.")
             return
+
+        # Log current message details
+        logger.debug(f"Current message ID: {query.message.message_id}")
+        logger.debug(f"Current message content: {query.message.to_dict()}")
 
         # Check if the message contains a photo before attempting to edit
         if not query.message.photo:
@@ -210,6 +220,7 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
         logger.error(f"TelegramError in safe_edit_message_media: {e.message}")
     except Exception as e:
         logger.error(f"Unexpected error in safe_edit_message_media: {e}")
+
 
 def delete_current_event_poster(context: CallbackContext, chat_id: int):
     """Delete the current event poster if it exists."""
@@ -545,13 +556,18 @@ def check_balance_callback(update: Update, context: CallbackContext):
                     )
                     return
 
-                # Edit the message media synchronously
-                safe_edit_message_media(
-                    query,
-                    check_balance_image,
-                    message_text,
-                    reply_markup=main_menu()
-                )
+                # Check if the message has a photo before editing
+                if query.message.photo:
+                    # Edit the message media synchronously
+                    safe_edit_message_media(
+                        query,
+                        check_balance_image,
+                        message_text,
+                        reply_markup=main_menu()
+                    )
+                else:
+                    logger.error("❌ The message does not contain a photo to edit.")
+                    query.message.reply_text("❌ Cannot edit media as the original message does not contain a photo.")
         else:
             # Safely answer the callback query
             if safe_answer_callback_query(query, context):
@@ -569,6 +585,7 @@ def check_balance_callback(update: Update, context: CallbackContext):
             query.message.reply_text("On average, a plastic bottle takes 450 years to decompose. Choose reusable and help protect the planet!")
     finally:
         db.close()
+
 
 def redeem_rewards_callback(update: Update, context: CallbackContext):
     """Display the rewards menu with appropriate image."""
