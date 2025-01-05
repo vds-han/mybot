@@ -67,7 +67,7 @@ class Reward(Base):
 
     # Relationships
     redemptions = relationship("Redemption", back_populates="reward", cascade="all, delete-orphan")
-    tng_pins = relationship("TNGPin", back_populates="reward")
+    tng_pins = relationship("TNGPin", back_populates="reward", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Reward(name='{self.name}', points_required={self.points_required}, quantity_available={self.quantity_available})>"
