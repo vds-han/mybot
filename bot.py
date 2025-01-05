@@ -196,9 +196,9 @@ def start(update: Update, context: CallbackContext):
     """Handle the /start command with optional activation parameter."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    args = context.args  # List of arguments passed with /start
+    args = context.args  # Arguments passed with /start (e.g., activate_bin)
 
-    logger.info(f"Received /start command from user: {user_id}, arguments: {args}")
+    logger.info(f"Received /start command from user: {user_id}")
 
     # Initialize the database session
     db = SessionLocal()
@@ -211,22 +211,21 @@ def start(update: Update, context: CallbackContext):
         if user:
             # If the user exists, handle the optional "activate_bin" parameter
             if args and args[0] == "activate_bin":
-                logger.info(f"Attempting to activate user: {user.name} (ID: {user.telegram_id})")
+                # Handle QR code activation
+                previous_user = None
+                if config and config.active_user_id:
+                    previous_user = db.query(User).filter_by(id=config.active_user_id).first()
 
                 # Deactivate the previous active user (if any)
-                if config and config.active_user_id:
-                    if config.active_user_id != user.id:
-                        previous_user = db.query(User).filter_by(id=config.active_user_id).first()
-                        if previous_user:
-                            logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
-                            # Optionally, notify the previous user about deactivation
-                            try:
-                                context.bot.send_message(
-                                    chat_id=previous_user.telegram_id,
-                                    text="🔔 You have been deactivated as the active user for the bin."
-                                )
-                            except Exception as e:
-                                logger.warning(f"Unable to notify previous user: {e}")
+                if previous_user and previous_user.id != user.id:
+                    logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
+                    try:
+                        context.bot.send_message(
+                            chat_id=previous_user.telegram_id,
+                            text="🔔 You have been deactivated as the active user for the bin."
+                        )
+                    except Exception as e:
+                        logger.warning(f"Unable to notify previous user: {e}")
 
                 # Ensure only one Configuration row exists
                 if not config:
