@@ -192,7 +192,7 @@ def request_registration(update: Update, context: CallbackContext):
         reply_markup=reply_markup,
     )
 
-def start(update: Update, context: CallbackContext):
+def start(update: Update, context: CallbackContext): 
     """Handle the /start command with optional activation parameter."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -252,11 +252,14 @@ def start(update: Update, context: CallbackContext):
             update.message.reply_text("👋 Welcome! Please register by sharing your phone number to continue.")
             request_registration(update, context)
 
+            # Ensure the user is registered in the database
+            db.commit()  # Ensure the user is fully saved in the database
+
             # After registration, make the user active if no active user exists
-            if not config or not config.active_user_id:
-                # Assign this new user as the active user
-                user = db.query(User).filter_by(telegram_id=user_id).first()  # Re-fetch the user after registration
-                if user:
+            user = db.query(User).filter_by(telegram_id=user_id).first()  # Re-fetch the user after registration
+            if user:
+                if not config or not config.active_user_id:
+                    # Assign this new user as the active user
                     if not config:
                         config = Configuration(active_user_id=user.id)
                         db.add(config)
@@ -277,7 +280,6 @@ def start(update: Update, context: CallbackContext):
     finally:
         db.close()
         logger.info(f"Database session closed for user {user_id}.")
-
 
 def active_user(update: Update, context: CallbackContext):
     db = SessionLocal()
