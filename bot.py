@@ -822,7 +822,7 @@ def error_handler(update: object, context: CallbackContext):
     # Notify the user about the error (optional)
     if isinstance(update, Update) and update.effective_message:
         update.effective_message.reply_text(
-            "🚫 An unexpected error occurred. Please try again later."
+            "Goats don’t rush, and neither should you—hang tight, we’re almost there!"
         )
 
 # MQTT Client Class
