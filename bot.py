@@ -425,7 +425,7 @@ def get_tng_pin(session: UserSession, reward: Reward, user: User) -> str:
 
         # Mark the pin as used
         tng_pin.used = True
-        tng_pin.used_by = user.id
+        tng_pin.used_by = user.telegram_id
         tng_pin.used_at = datetime.utcnow()
         logger.info(f"TNG PIN {tng_pin.pin} redeemed by user {user.name} (ID: {user.telegram_id}) at {tng_pin.used_at}")
         
