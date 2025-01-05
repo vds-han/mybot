@@ -211,20 +211,31 @@ def start(update: Update, context: CallbackContext):
         if user:
             # If the user exists, handle the optional "activate_bin" parameter
             if args and args[0] == "activate_bin":
-                # Handle QR code activation
-                if config:
-                    if config.active_user_id:
-                        # Deactivate the previous active user (if any)
-                        previous_user = db.query(User).filter_by(id=config.active_user_id).first()
-                        if previous_user and previous_user.id != user.id:
-                            logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
+                logger.info(f"Attempting to activate user: {user.name} (ID: {user.telegram_id})")
 
-                # Activate the current user as the new active user
+                # Deactivate the previous active user (if any)
+                if config and config.active_user_id:
+                    if config.active_user_id != user.id:
+                        previous_user = db.query(User).filter_by(id=config.active_user_id).first()
+                        if previous_user:
+                            logger.info(f"Deactivating previous user: {previous_user.name} (ID: {previous_user.telegram_id}).")
+                            # Optionally, notify the previous user about deactivation
+                            try:
+                                context.bot.send_message(
+                                    chat_id=previous_user.telegram_id,
+                                    text="🔔 You have been deactivated as the active user for the bin."
+                                )
+                            except Exception as e:
+                                logger.warning(f"Unable to notify previous user: {e}")
+
+                # Ensure only one Configuration row exists
                 if not config:
                     config = Configuration(active_user_id=user.id)
                     db.add(config)
+                    logger.info(f"Created new Configuration with active_user_id: {user.id}")
                 else:
                     config.active_user_id = user.id
+                    logger.info(f"Set active_user_id to: {user.id}")
 
                 db.commit()
 
@@ -245,6 +256,7 @@ def start(update: Update, context: CallbackContext):
                     "🚫 You need to register first. Please share your phone number to register."
                 )
                 request_registration(update, context)
+                logger.info(f"User {user_id} attempted activation without registration.")
             else:
                 # Regular /start command for a new user
                 update.message.reply_text(
@@ -1013,6 +1025,20 @@ def initialize_bot():
         logger.error(f"❌ Failed to initialize the database: {e}")
         return
 
+    # Ensure a Configuration row exists
+    db = SessionLocal()
+    try:
+        config = db.query(Configuration).first()
+        if not config:
+            config = Configuration(active_user_id=None)
+            db.add(config)
+            db.commit()
+            logger.info("✅ Created default Configuration row.")
+    except Exception as e:
+        logger.error(f"❌ Failed to ensure Configuration row: {e}")
+    finally:
+        db.close()
+
     # Validate essential environment variables
     if not all([TOKEN, BOT_USERNAME, WEBHOOK_URL]):
         logger.error("❌ TELEGRAM_BOT_TOKEN, BOT_USERNAME, and WEBHOOK_URL must be set in environment variables.")
@@ -1062,6 +1088,7 @@ def initialize_bot():
     threading.Thread(target=process_message_queue, daemon=True).start()
 
     logger.info("✅ Bot is running with webhook and Flask managed by Render.")
+
 
 # Remove the background thread and call initialize_bot() directly
 if __name__ == "__main__":
