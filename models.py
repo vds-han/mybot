@@ -1,6 +1,6 @@
 # models.py
 
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Date
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Date, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -116,8 +116,8 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    start_time = Column(Integer, nullable=False)  # Epoch timestamp in milliseconds
-    end_time = Column(Integer, nullable=False)    # Epoch timestamp in milliseconds
+    start_time = Column(DateTime, nullable=False, default=datetime.utcnow)
+    end_time = Column(DateTime, nullable=False)
 
     # Relationships
     user = relationship("User", back_populates="sessions")
@@ -128,7 +128,14 @@ class UserSession(Base):
 class Configuration(Base):
     __tablename__ = "configuration"
     id = Column(Integer, primary_key=True, index=True)
-    active_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    active_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, unique=True)
+
+    # Relationships
+    active_user = relationship("User")
 
     def __repr__(self):
         return f"<Configuration(active_user_id={self.active_user_id})>"
+
+    __table_args__ = (
+        UniqueConstraint('id', name='uix_configuration_id'),
+    )
