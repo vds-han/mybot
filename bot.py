@@ -328,12 +328,10 @@ def collect_name(update: Update, context: CallbackContext):
     db.commit()
     logger.info(f"User {user_id} has registered with name: {user.name}")
 
-    # Assign as active user if no active user exists
+    # Check if there's an active user
     config = db.query(Configuration).first()
-    logger.debug(f"Configuration Retrieved: {config}")
-    logger.debug(f"Current active_user_id: {config.active_user_id if config else 'None'}")
-
     if not config:
+        # No config row exists, create one and set the user as active
         config = Configuration(active_user_id=user.id)
         db.add(config)
         db.commit()
@@ -341,33 +339,27 @@ def collect_name(update: Update, context: CallbackContext):
             f"🎉 You have been registered and are now the active user for the bin!\n"
             f"Start disposing to earn points."
         )
-        logger.info(f"Configuration created. Active user set to {user.name} (ID: {user.telegram_id}).")
+        logger.info(f"User {user.name} (ID: {user.telegram_id}) has been set as the active user.")
     elif not config.active_user_id:
+        # Set the new user as active if no active user exists
         config.active_user_id = user.id
         db.commit()
         update.message.reply_text(
             f"🎉 You have been registered and are now the active user for the bin!\n"
             f"Start disposing to earn points."
         )
-        logger.info(f"Active user set to {user.name} (ID: {user.telegram_id}).")
-    elif config.active_user_id == user.id:
-        # User is already the active user
-        update.message.reply_text(
-            f"🎉 You are already the active user for the bin!\n"
-            f"Start disposing to earn points."
-        )
-        logger.info(f"User {user.name} (ID: {user.telegram_id}) is already active.")
+        logger.info(f"User {user.name} (ID: {user.telegram_id}) has been set as the active user.")
     else:
-        # Assigning a new active user should be handled via /start with activate_bin
+        # User is registered, but not set as active
         update.message.reply_text(
-            f"🎉 Thank you, *{user.name}*! Your registration is now complete. Use /start to invoke the bot's main menu.",
-            parse_mode=ParseMode.MARKDOWN
+            f"🎉 Thank you, {user.name}! Your registration is complete. Use /start to access the main menu."
         )
         logger.info(f"User {user.name} (ID: {user.telegram_id}) registered but not set as active user.")
 
     # Clear the registration step
     context.user_data.pop('registration_step', None)
     db.close()
+
 
 def check_balance_callback(update: Update, context: CallbackContext):
     """Display the user's current balance and update the image."""
