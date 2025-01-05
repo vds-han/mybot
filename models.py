@@ -20,7 +20,20 @@ class SensitiveInfoFilter(logging.Filter):
             for sensitive in self.sensitive_data:
                 record.msg = re.sub(rf"{sensitive}", "[REDACTED]", str(record.msg))
         return True
+        
+class TNGPin(Base):
+    __tablename__ = 'tng_pins'
 
+    id = Column(Integer, primary_key=True, index=True)
+    pin = Column(String, unique=True, index=True, nullable=False)
+    reward_id = Column(Integer, ForeignKey('rewards.id'), nullable=False)
+    used = Column(Boolean, default=False)
+    used_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    used_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    reward = relationship("Reward", back_populates="tng_pins")
+    user = relationship("User", back_populates="tng_pins")
 
 # Database Models
 class User(Base):
@@ -35,7 +48,7 @@ class User(Base):
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     redemptions = relationship("Redemption", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
-
+    tng_pins = relationship("TNGPin", back_populates="user")
 
 class Reward(Base):
     __tablename__ = "rewards"
@@ -47,7 +60,7 @@ class Reward(Base):
 
     # Relationships
     redemptions = relationship("Redemption", back_populates="reward", cascade="all, delete-orphan")
-
+    tng_pins = relationship("TNGPin", back_populates="reward")
 
 class Transaction(Base):
     __tablename__ = "transactions"
