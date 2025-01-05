@@ -155,6 +155,7 @@ def preload_images():
     return images
 
 
+
 def main_menu():
     """Main menu inline keyboard."""
     keyboard = [
@@ -172,7 +173,7 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
 
     Args:
         query (CallbackQuery): The callback query object.
-        media_input (InputFile or str): The media to send (InputFile for preloaded images or URL).
+        media_input (BytesIO or str): The media to send (BytesIO for preloaded images or URL).
         caption (str): The caption for the media.
         reply_markup (InlineKeyboardMarkup, optional): The reply markup for the message.
     """
@@ -182,14 +183,17 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
             return
 
         # Validate media_input type
-        if isinstance(media_input, InputFile):
-            media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
-            logger.debug(f"Media is InputFile: {media_input}")
+        if isinstance(media_input, io.BytesIO):
+            # Reset the buffer to start
+            media_input.seek(0)
+            input_file = InputFile(media_input, filename=media_input.name)
+            media = InputMediaPhoto(media=input_file, caption=caption, parse_mode=ParseMode.MARKDOWN)
+            logger.debug(f"Media is BytesIO: {media_input.name}")
         elif isinstance(media_input, str):
             media = InputMediaPhoto(media=media_input, caption=caption, parse_mode=ParseMode.MARKDOWN)
             logger.debug(f"Media is URL string: {media_input}")
         else:
-            logger.error("❌ Unsupported media_input type. Must be InputFile or URL string.")
+            logger.error("❌ Unsupported media_input type. Must be BytesIO or URL string.")
             return
 
         # Log current message details
@@ -223,7 +227,6 @@ def safe_edit_message_media(query, media_input, caption, reply_markup=None):
         logger.error(f"TelegramError in safe_edit_message_media: {e.message}")
     except Exception as e:
         logger.error(f"Unexpected error in safe_edit_message_media: {e}")
-
 
 def delete_current_event_poster(context: CallbackContext, chat_id: int):
     """Delete the current event poster if it exists."""
@@ -588,7 +591,6 @@ def check_balance_callback(update: Update, context: CallbackContext):
             query.message.reply_text("On average, a plastic bottle takes 450 years to decompose. Choose reusable and help protect the planet!")
     finally:
         db.close()
-
 
 def redeem_rewards_callback(update: Update, context: CallbackContext):
     """Display the rewards menu with appropriate image."""
