@@ -401,7 +401,7 @@ def redeem_rewards_callback(update: Update, context: CallbackContext):
         )
     db.close()
 
-def get_tng_pin(session: Session, reward: Reward, user: User) -> str:
+def get_tng_pin(session: UserSession, reward: Reward, user: User) -> str:
     """Retrieve an unused TNG pin for a specific reward and mark it as used."""
     try:
         # Fetch the first unused pin for the reward with row locking to prevent race conditions
