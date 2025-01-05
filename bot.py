@@ -57,7 +57,7 @@ COMPANY_IMAGE_URL = "https://img.freepik.com/premium-photo/earth-day-poster-back
 CHECK_BALANCE_IMAGE_URL = "https://i.pinimg.com/originals/9f/ba/ad/9fbaad5f595b5099c1950d211de4892b.jpg"
 VIEW_EVENTS_IMAGE_URL = "https://i.pinimg.com/originals/c3/b7/30/c3b73071bac1d682526046adbcbf5777.jpg"
 REDEEM_REWARDS_IMAGE_URL = "https://static.vecteezy.com/system/resources/previews/000/299/799/original/earth-day-vector-design-for-card-poster-banner-flyer.jpg"
-LEADERBOARD_IMAGE_URL = "https://img.freepik.com/premium-vector/watercolor-earth-day-illustration_23-2149322868.jpg?w=2000"
+LEADERBOARD_IMAGE_URL = "https://th.bing.com/th/id/OIP.AytYm-aNAOHKnfBk_4UxiwHaHa?rs=1&pid=ImgDetMain"
 VIEW_DISPOSAL_HISTORY_IMAGE_URL = "https://i.pinimg.com/originals/ae/b3/20/aeb32056367d7927dc69888bc4398d68.jpg"
 
 # Configure logging
