@@ -328,38 +328,43 @@ def collect_name(update: Update, context: CallbackContext):
     db.commit()
     logger.info(f"User {user_id} has registered with name: {user.name}")
 
-    # Check if there's an active user
+    # Fetch the Configuration
     config = db.query(Configuration).first()
+
+    # Deactivate the previous active user if exists
+    if config and config.active_user_id and config.active_user_id != user.id:
+        previous_user = db.query(User).filter_by(id=config.active_user_id).first()
+        if previous_user:
+            try:
+                context.bot.send_message(
+                    chat_id=previous_user.telegram_id,
+                    text="🔔 You have been deactivated as the active user for the bin."
+                )
+                logger.info(f"Notified previous active user: {previous_user.name} (ID: {previous_user.telegram_id}).")
+            except Exception as e:
+                logger.warning(f"Unable to notify previous user: {e}")
+
+    # Set the new user as the active user
     if not config:
-        # No config row exists, create one and set the user as active
         config = Configuration(active_user_id=user.id)
         db.add(config)
-        db.commit()
-        update.message.reply_text(
-            f"🎉 You have been registered and are now the active user for the bin!\n"
-            f"Start disposing to earn points."
-        )
-        logger.info(f"User {user.name} (ID: {user.telegram_id}) has been set as the active user.")
-    elif not config.active_user_id:
-        # Set the new user as active if no active user exists
-        config.active_user_id = user.id
-        db.commit()
-        update.message.reply_text(
-            f"🎉 You have been registered and are now the active user for the bin!\n"
-            f"Start disposing to earn points."
-        )
-        logger.info(f"User {user.name} (ID: {user.telegram_id}) has been set as the active user.")
+        logger.info(f"Created new Configuration with active_user_id: {user.id}")
     else:
-        # User is registered, but not set as active
-        update.message.reply_text(
-            f"🎉 Thank you, {user.name}! Your registration is complete. Use /start to access the main menu."
-        )
-        logger.info(f"User {user.name} (ID: {user.telegram_id}) registered but not set as active user.")
+        config.active_user_id = user.id
+        logger.info(f"Set active_user_id to: {user.id}")
+
+    db.commit()
+
+    # Notify the new active user
+    update.message.reply_text(
+        f"🎉 You have been registered and are now the active user for the bin, {user.name}!\n"
+        f"Start disposing to earn points."
+    )
+    logger.info(f"User {user.name} (ID: {user.telegram_id}) is now active.")
 
     # Clear the registration step
     context.user_data.pop('registration_step', None)
     db.close()
-
 
 def check_balance_callback(update: Update, context: CallbackContext):
     """Display the user's current balance and update the image."""
