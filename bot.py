@@ -855,7 +855,7 @@ def error_handler(update: object, context: CallbackContext):
     # Notify the user about the error (optional)
     if isinstance(update, Update) and update.effective_message:
         update.effective_message.reply_text(
-            "Goats don’t rush, and neither should you—hang tight, we’re almost there!"
+            "Goats don’t rush, and neither should you—hang tight, we’re back again!"
         )
 
 # MQTT Client Class
